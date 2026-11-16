@@ -31,14 +31,14 @@ h1{margin:0;font-weight:800;letter-spacing:-.02em}
   <div class="copy">
     <h1>The week number,<br>always in sight.</h1>
     <p>TinyWeek puts the ISO week number next to your Windows clock. Crisp, theme-aware, and so small you'll forget it's there.</p>
-    <div class="chips" style="max-width:330px"><span class="chip">28 KB</span><span class="chip">No installer</span><span class="chip">No runtime</span><span class="chip">0 % CPU when idle</span></div>
+    <div class="chips" style="max-width:330px"><span class="chip">30 KB</span><span class="chip">No installer</span><span class="chip">No runtime</span><span class="chip">0 % CPU when idle</span></div>
   </div>
   <div class="tip" style="right:178px;bottom:88px">Week 47<br><span style="color:#c8c8c8">Monday, 16 November 2026</span></div>
   <div class="taskbar tb-dark" data-tray="dark" data-hl="1"></div>
 </div>
 
 <!-- 2. MENU -->
-<div class="shot wall" id="menu" style="height:540px">
+<div class="shot wall" id="menu" style="height:580px">
   <div class="copy" style="max-width:600px;top:40px">
     <h1 style="font-size:38px">Make it yours.</h1>
     <p>Choose the size and weight of the digits from the right-click menu. Your choice is remembered.</p>
@@ -47,6 +47,7 @@ h1{margin:0;font-weight:800;letter-spacing:-.02em}
     <div class="i">Show date</div><div class="i">Refresh</div>
     <div class="i">Size<span>›</span></div>
     <div class="i act">Weight<span>›</span></div>
+    <div class="i">Show “wk”</div>
     <div class="i"><span class="ck">✓</span>Start with Windows</div>
     <div class="i">Check for updates</div>
     <div class="sep"></div><div class="i">Exit</div>
@@ -72,14 +73,6 @@ h1{margin:0;font-weight:800;letter-spacing:-.02em}
   <div class="label" style="position:absolute;left:66px;top:266px;color:#1b1b1b;opacity:.75">Light</div>
 </div>
 
-<!-- 4. CUSTOMIZE GRID -->
-<div class="shot" id="grid" style="height:430px;background:#16171d;color:#fff">
-  <div style="position:absolute;left:48px;top:36px">
-    <h1 style="font-size:34px">Big, sharp digits at any scale.</h1>
-    <p style="font-size:17px;color:#b9bdd0;margin:10px 0 0">Drawn at your screen's real icon size and fitted edge to edge. Never stretched.</p>
-  </div>
-  <div id="gridbody" style="position:absolute;left:48px;top:140px;right:48px"></div>
-</div>
 
 <script>
 // Icon renderer mirroring the app: ink box fills target, uniform scale, tight digit gap.
@@ -104,14 +97,5 @@ document.querySelectorAll('[data-tray]').forEach(tb=>{
   tb.innerHTML=`<div class="ti">${svgs.chev(c)}</div><div class="ti ${tb.dataset.hl?'hl':''}" data-ic></div>
    <div class="sys">${svgs.wifi(c)}${svgs.vol(c)}${svgs.bat(c)}</div><div class="clock">10:39<br>16/11/2026</div>`;
   tb.querySelector('[data-ic]').appendChild(icon(47,30,{color:c}))});
-// grid
-const gb=document.getElementById('gridbody');
-const weights=[[300,'Light'],[400,'Regular'],[600,'Semibold'],[700,'Bold']],pcts=[100,80,60];
-let h=`<div style="display:grid;grid-template-columns:110px repeat(4,1fr);gap:14px;align-items:center">
- <div></div>${weights.map(w=>`<div class="label" style="color:#8d92a8;text-align:center">${w[1]}</div>`).join('')}`;
-pcts.forEach(p=>{h+=`<div class="label" style="color:#8d92a8">Size ${p} %</div>`;
- weights.forEach((w,i)=>h+=`<div style="display:flex;justify-content:center"><div data-cell="${p},${w[0]}" style="width:64px;height:64px;border-radius:12px;background:#24262f;display:flex;align-items:center;justify-content:center;border:1px solid #30333f"></div></div>`)});
-gb.innerHTML=h+'</div>';
-document.querySelectorAll('[data-cell]').forEach(el=>{const [p,w]=el.dataset.cell.split(',').map(Number);el.appendChild(icon(47,48,{weight:w,pct:p}))});
 document.fonts.ready.then(()=>document.body.dataset.ready=1);
 </script></body></html>

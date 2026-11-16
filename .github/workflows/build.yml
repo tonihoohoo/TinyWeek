@@ -2,7 +2,8 @@ name: build
 
 # Every push and pull request builds TinyWeek.exe.
 # A push to main whose VERSION file names a version that has no release yet
-# also tags that commit as v<VERSION> and publishes the release.
+# also tags that commit as v<VERSION> and publishes the release, with the
+# matching section of CHANGELOG.md as its release notes.
 
 on:
   push:
@@ -39,10 +40,20 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="v$(cat VERSION)"
+          VERSION="$(cat VERSION)"
+          TAG="v$VERSION"
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "$TAG is already released, nothing to publish."
-          else
-            gh release create "$TAG" build/TinyWeek.exe build/TinyWeek.exe.sha256 \
-              --target "$GITHUB_SHA" --title "TinyWeek $TAG" --generate-notes
+            exit 0
           fi
+          # Release notes = the "## <version>" section of CHANGELOG.md (required).
+          awk -v v="$VERSION" '
+            /^## / { if (found) exit; found = ($2 == v || $2 == "[" v "]"); next }
+            found' CHANGELOG.md | sed -e '/./,$!d' > notes.md
+          if [ ! -s notes.md ]; then
+            echo "::error::CHANGELOG.md has no '## $VERSION' section. Add release notes before releasing."
+            exit 1
+          fi
+          cat notes.md
+          gh release create "$TAG" build/TinyWeek.exe build/TinyWeek.exe.sha256 \
+            --target "$GITHUB_SHA" --title "TinyWeek $TAG" --notes-file notes.md

@@ -5,8 +5,8 @@
 <h1 align="center">TinyWeek</h1>
 
 <p align="center">
-  The ISO 8601 week number in the Windows notification area.<br>
-  One 28 KB <code>.exe</code>. No installer, no runtime, no dependencies.
+  The week number in your Windows taskbar.<br>
+  One small file. No installation needed.
 </p>
 
 <p align="center">
@@ -17,192 +17,153 @@
   <img src="docs/screenshots/hero.png" width="880" alt="TinyWeek shows week 47 in the Windows taskbar next to the clock, with a tooltip reading Week 47, Monday, 16 November 2026">
 </p>
 
-TinyWeek puts the current week number next to your clock, drawn crisp at the
-taskbar's real pixel size. Hover for the full date, right-click for the menu.
-
 <p align="center">
-  <img src="docs/screenshots/menu.png" width="880" alt="Right-click menu with Show date, Refresh, Size, Weight, Start with Windows and Exit; the Weight submenu offers Light, Regular, Semibold and Bold">
+  <img src="docs/screenshots/menu.png" width="880" alt="Right-click menu with Show date, Refresh, Size, Weight, Show wk, Start with Windows, Check for updates and Exit; the Weight submenu offers Light, Regular, Semibold and Bold">
 </p>
 
 <p align="center">
   <img src="docs/screenshots/themes.png" width="880" alt="The week number in white on a dark taskbar and in black on a light taskbar">
 </p>
 
-<p align="center">
-  <img src="docs/screenshots/grid.png" width="880" alt="Week number 47 at sizes 100, 80 and 60 percent in Light, Regular, Semibold and Bold weights">
-</p>
-
 <sub>Images are illustrations of TinyWeek on a Windows 11 style taskbar.</sub>
 
 ## Features
 
-- **Tiny**: plain Win32 C without the C runtime; the executable imports only
-  system DLLs (`kernel32`, `user32`, `gdi32`, `shell32`, `advapi32`).
-- **Zero idle cost**: no polling. It wakes up only at midnight, after
-  sleep/resume, when the clock or time zone changes, or when Explorer restarts.
-- **Big, sharp digits at any DPI**: rendered at the tray's native icon size,
-  scaled by their true glyph bounds to fill the whole icon, with tight digit
-  spacing. Proportions are never stretched.
-- **Matches your system font**: uses the Windows UI font, and on Windows 11
-  Segoe UI Variable, the same font as the taskbar clock.
-- **Adjustable size and weight**: size from 100 % (largest that fits the
-  icon) down to 60 %, weight Light, Regular, Semibold or Bold.
-- **Follows the taskbar theme**: white digits on a dark taskbar, black on a light one.
-- **Correct ISO 8601 weeks**: weeks start on Monday, and week 1 is the week
-  that contains the year's first Thursday (verified for every day 1900–2199).
-- **Start with Windows** toggle in the menu (per-user, no admin rights).
-- **One-click updates**: *Check for updates* downloads the latest release,
-  verifies its SHA-256 checksum and restarts into the new version.
-- **Dark menu** on a dark taskbar.
-- Single instance; the date is shown in your own locale format.
+- Shows the ISO week number (weeks start on Monday), as used in Europe.
+- Large, sharp digits in your system font, white on a dark taskbar and black
+  on a light one.
+- Adjustable size and weight, and an optional "wk" label above the number.
+- Starts with Windows if you want, and updates itself from the menu.
+- Uses no CPU while idle and needs no admin rights.
 
 ## Install
 
-TinyWeek is a single file, so installing means putting it in a permanent
-place and telling Windows to start it.
-
 ### 1. Download
 
-Get `TinyWeek.exe` from [Releases](../../releases).
+Click **[Download TinyWeek.exe](../../releases/latest)** and, on the page that
+opens, click `TinyWeek.exe`. The file goes to your **Downloads** folder.
 
-The binary is not code-signed, so SmartScreen may warn the first time
-(*More info → Run anyway*). Each release includes a SHA-256 checksum you can
-compare with PowerShell's `Get-FileHash .\TinyWeek.exe`.
+### 2. Move it to its own folder
 
-### 2. Move it to a permanent folder
+Run it from a permanent place, not from Downloads. We recommend
+`%LOCALAPPDATA%\Programs\TinyWeek`, which works without admin rights.
 
-Don't run it from *Downloads*. The recommended place is your per-user
-programs folder, which needs no admin rights:
+**With File Explorer:**
 
-```
-%LOCALAPPDATA%\Programs\TinyWeek\TinyWeek.exe
-```
+1. Press **Windows key + E** to open File Explorer.
+2. Click the address bar at the top, type `%LOCALAPPDATA%\Programs` and press
+   **Enter**.
+3. Create a new folder named `TinyWeek` (right-click an empty area →
+   **New** → **Folder**).
+4. Move `TinyWeek.exe` from your Downloads folder into the new folder.
+5. Double-click `TinyWeek.exe` to start it.
 
-Paste `%LOCALAPPDATA%\Programs` into File Explorer's address bar, create a
-`TinyWeek` folder and move the file there. Or run this in PowerShell from the
-folder where you downloaded it:
+**Or with PowerShell** (does steps 1–5 in one go):
 
-```powershell
-$dir = "$env:LOCALAPPDATA\Programs\TinyWeek"
-New-Item -ItemType Directory -Force $dir | Out-Null
-Move-Item .\TinyWeek.exe $dir -Force
-Start-Process "$dir\TinyWeek.exe"
-```
+1. Open File Explorer (**Windows key + E**) and go to your **Downloads**
+   folder.
+2. Click the address bar, type `powershell` and press **Enter**. A blue or
+   black PowerShell window opens in the Downloads folder.
+3. Copy the lines below, right-click inside the PowerShell window to paste
+   them and press **Enter**:
 
-To install it for all users on the PC, `C:\Program Files\TinyWeek\` also
-works (needs admin rights to copy there).
+   ```powershell
+   $dir = "$env:LOCALAPPDATA\Programs\TinyWeek"
+   New-Item -ItemType Directory -Force $dir | Out-Null
+   Move-Item .\TinyWeek.exe $dir -Force
+   Start-Process "$dir\TinyWeek.exe"
+   ```
 
-### 3. Start it with Windows
+4. Close the PowerShell window.
 
-Run `TinyWeek.exe`, right-click the week number and tick **Start with Windows**.
-This adds a per-user entry under
-`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`. You can also turn it
-off in *Task Manager → Startup apps* or *Settings → Apps → Startup*.
+### 3. Windows may warn you the first time
 
-If you move the exe later, start it once from the new place: it updates the
-startup entry to its new path automatically.
+TinyWeek is not signed with a paid code-signing certificate, so Windows may
+show *"Windows protected your PC"*. Click **More info** → **Run anyway**. This
+happens only once.
 
-### 4. Keep the icon visible (Windows 11)
+### 4. Show the icon on the taskbar (Windows 11)
 
-New tray icons go to the overflow menu (**^**) by default. Either drag the
-week number from the overflow onto the taskbar, or open
-*Settings → Personalization → Taskbar → Other system tray icons* and switch
-**TinyWeek** on.
+Windows 11 hides new icons behind the **^** arrow next to the clock. To keep
+the week number visible, do either:
 
-### Update
+- Click **^** and drag the week number onto the taskbar, or
+- Right-click the taskbar → **Taskbar settings** → **Other system tray icons**
+  and switch **TinyWeek** on.
 
-Right-click the icon and choose **Check for updates**. If a newer version is
-available, TinyWeek asks before downloading it, checks the file against the
-SHA-256 checksum published with the release, replaces itself and restarts.
-Your settings are kept.
+### 5. Start it automatically
 
-If TinyWeek is in a folder you can't write to without admin rights (such as
-`C:\Program Files`), it offers to open the download page instead. You can also
-update by hand: **Exit**, replace `TinyWeek.exe`, start it again.
+Right-click the week number and tick **Start with Windows**.
 
-### Uninstall
+## Use
 
-1. Right-click the icon and untick **Start with Windows**.
+- **Hover** over the number to see the full date.
+- **Double-click** to show the date in a window.
+- **Right-click** for the menu:
+
+| Menu item | What it does |
+|---|---|
+| Show date | Shows today's date and week |
+| Refresh | Redraws the icon (it also updates by itself at midnight) |
+| Size | Size of the number: 100 % (largest), 90 %, 80 % or 70 % |
+| Weight | Thickness of the number: Light, Regular, Semibold or Bold |
+| Show "wk" | Shows "wk" above the number. Available at display scaling of 125 % or more |
+| Start with Windows | Starts TinyWeek when you sign in |
+| Check for updates | Downloads and installs a newer version if there is one |
+| Exit | Closes TinyWeek |
+
+Your choices are remembered. See [what's new](CHANGELOG.md) in each version.
+
+## Update
+
+Right-click the week number → **Check for updates**. If a newer version is
+available, TinyWeek asks first, then downloads it, checks that the file is
+intact, replaces itself and restarts. The question shows what has changed in
+the new version. Your settings are kept.
+
+If TinyWeek is in a folder that needs admin rights (such as
+`C:\Program Files`), it opens the download page instead.
+
+## Uninstall
+
+1. Right-click the week number and untick **Start with Windows**.
 2. Choose **Exit**.
-3. Delete the `TinyWeek` folder.
-4. If you changed **Size** or **Weight**, also delete the registry key
-   `HKCU\Software\TinyWeek`, for example in PowerShell:
+3. Delete the `TinyWeek` folder (in File Explorer, go to
+   `%LOCALAPPDATA%\Programs`).
+4. To remove saved settings as well: press **Windows key**, type `powershell`,
+   press **Enter**, paste this line and press **Enter**:
 
    ```powershell
    Remove-Item HKCU:\Software\TinyWeek -ErrorAction SilentlyContinue
    ```
 
-TinyWeek writes nothing else to your system: no files, and no registry keys
-besides the startup entry and the size and weight settings.
-
-## Usage
-
-| Action | Result |
-|---|---|
-| Hover | Week number and full date |
-| Double-click | Date dialog |
-| Right-click | Show date · Refresh · Size · Weight · Start with Windows · Check for updates · Exit |
-
-**Size** sets how large the digits are: 100 % is the largest that fits the
-icon, and 90–60 % leave more space around them. **Weight** sets the stroke
-thickness: Light, Regular, Semibold or Bold (default). Both choices are
-remembered.
-
-The icon updates by itself at midnight, after the PC wakes from sleep, when
-the clock or time zone changes, and when you switch the taskbar between light
-and dark, or when the system font changes. **Refresh** is only needed if something looks wrong.
-
 ## FAQ
 
-**Why not inside the Windows clock?** Windows has no supported way to extend
-the taskbar clock or calendar. Doing it means injecting code into Explorer,
-which breaks with Windows updates and triggers antivirus software. A tray icon
-is the robust option.
-
-**How much memory and CPU does it use?** No CPU while idle: it sleeps until
-Windows sends it a message. Memory is around 1–2 MB, mostly the system
-libraries every GUI program loads.
+**Can the week number go inside the Windows clock?** No. Windows has no
+supported way to add text to the clock, so TinyWeek uses its own icon next to
+it.
 
 **Does it connect to the internet?** Only when you choose **Check for
-updates**. It then contacts GitHub (`api.github.com` and `github.com`) and
-sends nothing besides the request itself. There are no automatic checks and no
-telemetry.
+updates**, and then only to GitHub. No automatic checks, no tracking.
 
-**Which Windows versions?** Windows 10 and 11. The dark menu needs Windows 10
-version 1903 or later.
+**Which Windows versions?** Windows 10 and 11.
 
-**Which week numbering?** ISO 8601, used in Finland, the rest of Europe and
-most of the world. US-style numbering (weeks starting on Sunday) is not
-supported.
+## Build from source
 
-## Build
-
-Requires MinGW-w64.
-
-**Linux:**
+Requires MinGW-w64. On Linux:
 
 ```bash
 sudo apt install gcc-mingw-w64-x86-64
 ./build.sh
 ```
 
-**Windows (MSYS2 UCRT64 shell):**
+On Windows, use the MSYS2 UCRT64 shell: `pacman -S mingw-w64-ucrt-x86_64-gcc`,
+then `CROSS= ./build.sh`. The result is `build/TinyWeek.exe`.
 
-```bash
-pacman -S mingw-w64-ucrt-x86_64-gcc
-CROSS= ./build.sh
-```
-
-The output is `build/TinyWeek.exe`.
-
-GitHub Actions builds the executable on every push. To publish a release,
-change the number in the `VERSION` file and push to `main`: the workflow tags
-the commit as `v<version>` and attaches the exe and its SHA-256 checksum.
-
-## Logo
-
-Seven bars for the days Monday to Sunday. Thursday is highlighted because in
-ISO 8601 Thursday decides which year and week a week belongs to.
+To publish a release, add a `## <version>` section to `CHANGELOG.md`, change
+the number in `VERSION` and push to `main`. GitHub Actions builds the exe and
+publishes it with its SHA-256 checksum, using the changelog section as the
+release notes. Without that section the release is not published.
 
 ## License
 

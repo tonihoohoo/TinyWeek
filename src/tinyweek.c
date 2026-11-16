@@ -28,6 +28,7 @@
 #define IDM_SIZE   10              /* IDM_SIZE + index into SIZES */
 #define IDM_WEIGHT 20              /* IDM_WEIGHT + index into WEIGHTS */
 #define IDM_UPDATE 5
+#define IDM_LABEL  6
 #define WM_UPDATE  (WM_APP + 2)    /* worker thread -> UI: wParam = UPD_* result */
 
 static const WCHAR RUN_KEY[] = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
@@ -39,10 +40,11 @@ static UINT  g_msgTaskbarCreated;
 static int   g_week;
 static int   g_size = 100;              /* digit size, % of the largest that fits */
 static int   g_weight = FW_BOLD;        /* digit font weight */
+static int   g_label;                   /* 1 = draw "wk" above the number */
 static WCHAR g_face[LF_FACESIZE];       /* font face, follows the system UI font */
 
 static const WCHAR SETTINGS_KEY[] = L"Software\\TinyWeek";
-static const BYTE SIZES[] = {100, 90, 80, 70, 60};
+static const BYTE SIZES[] = {100, 90, 80, 70};
 static const short WEIGHTS[] = {FW_LIGHT, FW_NORMAL, FW_SEMIBOLD, FW_BOLD};
 static const WCHAR *const WEIGHT_NAMES[] = {L"Light", L"Regular", L"Semibold", L"Bold"};
 #define COUNT(a) ((int)(sizeof(a) / sizeof((a)[0])))
@@ -169,12 +171,46 @@ static int measure(HDC dc, DWORD *px, int stride, const WCHAR *s, int n,
     return w;
 }
 
+/* Largest font at which `s` fits a bw x bh box, by its true ink (not the
+ * font cell). Uniform scaling only: glyphs keep their proportions. */
+typedef struct { int em, w, h, top; RECT k[4]; } FIT;
+
+static void fit(HDC dc, DWORD *px, int stride, const WCHAR *s, int n,
+                int bw, int bh, int gap, FIT *f)
+{
+    int bottom;
+    f->em = bh;
+    f->w = measure(dc, px, stride, s, n, f->em, gap, f->k, &f->top, &bottom);
+    f->h = bottom - f->top + 1;
+    if (f->w > 0 && f->h > 0)
+        f->em = (f->w * bh > f->h * bw ? f->em * bw / f->w : f->em * bh / f->h) + 1;
+    for (;;) {                                       /* hinting may shift a pixel */
+        f->w = measure(dc, px, stride, s, n, f->em, gap, f->k, &f->top, &bottom);
+        f->h = bottom - f->top + 1;
+        if ((f->w <= bw && f->h <= bh) || f->em <= 3) break;
+        f->em--;
+    }
+}
+
+/* Draws `s` character by character, ink box centred horizontally in the
+ * icon (width S) with its top ink row at y. */
+static void draw_fit(HDC dc, const WCHAR *s, int n, const FIT *f, int S, int y, int gap)
+{
+    HGDIOBJ old = SelectObject(dc, digit_font(f->em));
+    int x = (S - f->w) / 2;
+    for (int i = 0; i < n; i++) {
+        TextOutW(dc, x - f->k[i].left, y - f->top, s + i, 1);
+        x += f->k[i].right - f->k[i].left + 1 + gap;
+    }
+    DeleteObject(SelectObject(dc, old));
+}
+
 static HICON make_icon(int week)
 {
     int S = GetSystemMetrics(SM_CXSMICON);          /* real tray size at current DPI */
-    int T = S * g_size / 100;                       /* target box for the digits */
+    int T = S * g_size / 100;                       /* target box for the text */
     int W = S * 2;                                  /* scratch canvas for measuring */
-    int gap = T >= 24 ? T / 12 : 1;                 /* tight but readable digit spacing */
+    int gap = T >= 24 ? T / 12 : 1;                 /* tight but readable spacing */
     WCHAR txt[4];
     int n = wsprintfW(txt, L"%d", week);
 
@@ -192,32 +228,26 @@ static HICON make_icon(int week)
     SetTextColor(dc, RGB(255, 255, 255));
     pick_font(dc);
 
-    /* Largest font whose true ink (not the font cell) fits the whole icon.
-     * Uniform scaling only: the glyphs keep their proportions. The gap
-     * between digits is tightened instead of using the font's spacing. */
-    RECT k[3];
-    int top, bottom, w, h, em = S;
-    w = measure(dc, px, W, txt, n, em, gap, k, &top, &bottom);
-    h = bottom - top + 1;
-    em = (w * h > 0) ? (w > h ? em * T / w : em * T / h) + 1 : T;
-    for (;;) {                                       /* hinting may shift a pixel */
-        w = measure(dc, px, W, txt, n, em, gap, k, &top, &bottom);
-        h = bottom - top + 1;
-        if ((w <= T && h <= T) || em <= 4) break;
-        em--;
-    }
-
-    /* Final draw: digits one by one, the whole ink box centred. */
-    HGDIOBJ old = SelectObject(dc, digit_font(em));
-    memset(px, 0, (SIZE_T)W * W * 4);
-    GdiFlush();
-    int x = (S - w) / 2, y = (S - h) / 2 - top;
-    for (int i = 0; i < n; i++) {
-        TextOutW(dc, x - k[i].left, y, txt + i, 1);
-        x += k[i].right - k[i].left + 1 + gap;
+    FIT num, lab;
+    if (!g_label || S < 20) {               /* the label is unreadable at 16 px */
+        /* Number only: as large as the whole box allows. */
+        fit(dc, px, W, txt, n, T, T, gap, &num);
+        memset(px, 0, (SIZE_T)W * W * 4);
+        GdiFlush();
+        draw_fit(dc, txt, n, &num, S, (S - num.h) / 2, gap);
+    } else {
+        /* "wk" on a small top line, the number below it. */
+        int lineGap = T >= 24 ? T / 16 : 1;
+        int labH = T * 34 / 100;
+        fit(dc, px, W, L"wk", 2, T, labH, gap, &lab);
+        fit(dc, px, W, txt, n, T, T - lab.h - lineGap, gap, &num);
+        int y = (S - (lab.h + lineGap + num.h)) / 2;
+        memset(px, 0, (SIZE_T)W * W * 4);
+        GdiFlush();
+        draw_fit(dc, L"wk", 2, &lab, S, y, gap);
+        draw_fit(dc, txt, n, &num, S, y + lab.h + lineGap, gap);
     }
     GdiFlush();
-    DeleteObject(SelectObject(dc, old));
 
     /* Coverage -> alpha. Colour follows taskbar theme. */
     DWORD rgb = light_taskbar() ? 0x000000 : 0xFFFFFF;
@@ -307,7 +337,7 @@ static void autorun_set(BOOL enable)
     RegCloseKey(k);
 }
 
-/* Settings: HKCU\\Software\\TinyWeek, DWORD values "Size" and "Weight". */
+/* Settings: HKCU\\Software\\TinyWeek, DWORD values "Size", "Weight", "Label". */
 static DWORD get_setting(const WCHAR *name, DWORD def)
 {
     DWORD v, cb = sizeof v;
@@ -327,6 +357,7 @@ static void load_settings(void)
     DWORD v = get_setting(L"Size", 100);
     for (int i = 0; i < COUNT(SIZES); i++)
         if (SIZES[i] == v) g_size = v;
+    g_label = get_setting(L"Label", 0) != 0;
     v = get_setting(L"Weight", FW_BOLD);
     for (int i = 0; i < COUNT(WEIGHTS); i++)
         if (WEIGHTS[i] == (int)v) g_weight = v;
@@ -363,6 +394,7 @@ enum { UPD_LATEST, UPD_NEWER, UPD_FAILED, UPD_READY, UPD_BAD_FILE };
 
 static volatile LONG g_busy;           /* an update check/download is running */
 static char  g_latest[32];             /* newest version on GitHub, e.g. "1.2.0" */
+static WCHAR g_notes[1200];            /* its release notes, shown before updating */
 static BYTE *g_dl;                     /* downloaded exe */
 static DWORD g_dlLen;
 static HANDLE g_mutex;
@@ -418,6 +450,79 @@ static int hexval(char ch)
     return -1;
 }
 
+/* Finds "key": in JSON (not inside another string) and returns a pointer
+ * just past it, or NULL. */
+static char *json_key(char *j, const char *key, int keylen)
+{
+    for (char *t = j; *t; t++)
+        if (t[0] == '"' && (t == j || t[-1] != '\\') && !memcmp_(t + 1, key, keylen) && t[1 + keylen] == '"') {
+            t += keylen + 2;
+            while (*t == ' ' || *t == ':') t++;
+            return t;
+        }
+    return NULL;
+}
+
+/* Decodes the JSON string at q (just after its opening quote) into UTF-8. */
+static void json_string(const char *q, char *out, int cap)
+{
+    int n = 0;
+    while (*q && *q != '"' && n < cap - 4) {
+        char ch = *q++;
+        if (ch == '\\' && *q) {
+            ch = *q++;
+            if (ch == 'n') ch = '\n';
+            else if (ch == 'r') continue;
+            else if (ch == 't') ch = ' ';
+            else if (ch == 'u') {
+                unsigned u = 0;
+                for (int i = 0; i < 4 && *q; i++) u = u * 16 + (unsigned)hexval(*q++);
+                if (u >= 0xD800 && u < 0xE000) u = '?';
+                if (u < 0x80) out[n++] = (char)u;
+                else if (u < 0x800) { out[n++] = (char)(0xC0 | u >> 6); out[n++] = (char)(0x80 | (u & 63)); }
+                else { out[n++] = (char)(0xE0 | u >> 12); out[n++] = (char)(0x80 | (u >> 6 & 63)); out[n++] = (char)(0x80 | (u & 63)); }
+                continue;
+            }
+        }
+        out[n++] = ch;
+    }
+    out[n] = 0;
+}
+
+/* Markdown release notes -> plain text for a message box. */
+static void notes_to_text(const char *md)
+{
+    WCHAR tmp[1200];
+    int n = MultiByteToWideChar(CP_UTF8, 0, md, -1, tmp, 1199), o = 0, bol = 1;
+    tmp[n > 0 ? n : 0] = 0;
+    for (WCHAR *c = tmp; *c && o < 1150; c++) {
+        if (bol) {                                  /* start of a line */
+            while (*c == '#') c++;
+            while (*c == ' ' && c[1] == ' ') c++;
+            if (*c == ' ' && (c == tmp || c[-1] == '#')) c++;
+            if ((*c == '-' || *c == '*') && c[1] == ' ') { g_notes[o++] = 0x2022; c++; }
+            bol = 0;
+        }
+        if (*c == '*' && c[1] == '*') { c++; continue; }   /* **bold** */
+        if (*c == '`') continue;
+        if (*c == '\n') {
+            WCHAR *d = c + 1;
+            while (*d == ' ') d++;
+            if (d > c + 1 && *d && *d != '\n' && !((*d == '-' || *d == '*') && d[1] == ' ')) {
+                g_notes[o++] = ' ';                 /* wrapped line: join it */
+                c = d - 1;
+                continue;
+            }
+            if (o >= 2 && g_notes[o - 1] == '\n' && g_notes[o - 2] == '\n') continue;
+            bol = 1;
+        }
+        g_notes[o++] = *c;
+    }
+    while (o && (g_notes[o - 1] == '\n' || g_notes[o - 1] == ' ')) o--;
+    if (o >= 1150) { g_notes[o++] = 0x2026; }
+    g_notes[o] = 0;
+}
+
 /* Worker thread. lp = 0: check the latest release. lp = 1: download it. */
 static DWORD WINAPI update_thread(LPVOID lp)
 {
@@ -431,11 +536,15 @@ static DWORD WINAPI update_thread(LPVOID lp)
         int n = http_get(L"api.github.com", L"/repos/" REPO L"/releases/latest", buf, cap - 1);
         if (n > 0) {
             buf[n] = 0;
-            char *t = (char *)buf, *q = NULL;     /* find "tag_name": "v1.2.3" */
-            for (; *t; t++)
-                if (t[0] == '"' && !memcmp_(t, "\"tag_name\"", 10)) { q = t + 10; break; }
+            char *q = json_key((char *)buf, "tag_name", 8);   /* "tag_name": "v1.2.3" */
+            char *b = json_key((char *)buf, "body", 4);        /* release notes */
+            g_notes[0] = 0;
+            if (b && *b == '"') {
+                static char md[2400];
+                json_string(b + 1, md, sizeof md);
+                notes_to_text(md);
+            }
             if (q) {
-                while (*q && *q != '"') q++;
                 if (*q == '"') {
                     q++;
                     int i = 0;
@@ -534,9 +643,18 @@ static void on_update_result(HWND hwnd, WPARAM result)
         MessageBoxW(hwnd, msg, L"TinyWeek", MB_OK | MB_ICONINFORMATION);
         break;
     case UPD_NEWER:
-        wsprintfW(msg, L"TinyWeek %S is available. You have %S.\n\nUpdate now?", g_latest, TW_VERSION_STR);
-        if (MessageBoxW(hwnd, msg, L"TinyWeek", MB_YESNO | MB_ICONQUESTION) == IDYES)
-            start_update((LPVOID)1);
+        {
+            static WCHAR ask[1400];
+            wsprintfW(ask, L"TinyWeek %S is available. You have %S.\n\n", g_latest, TW_VERSION_STR);
+            if (g_notes[0]) {
+                lstrcatW(ask, L"What\x2019s new:\n");
+                lstrcatW(ask, g_notes);
+                lstrcatW(ask, L"\n\n");
+            }
+            lstrcatW(ask, L"Update now?");
+            if (MessageBoxW(hwnd, ask, L"TinyWeek update", MB_YESNO | MB_ICONQUESTION) == IDYES)
+                start_update((LPVOID)1);
+        }
         break;
     case UPD_READY:
         install_update(hwnd);
@@ -570,6 +688,10 @@ static void show_menu(HWND hwnd, int x, int y)
     for (int i = 0; i < COUNT(WEIGHTS); i++)
         AppendMenuW(wt, MF_STRING | (WEIGHTS[i] == g_weight ? MF_CHECKED : 0), IDM_WEIGHT + i, WEIGHT_NAMES[i]);
     AppendMenuW(m, MF_POPUP, (UINT_PTR)wt, L"Weight");
+    if (GetSystemMetrics(SM_CXSMICON) >= 20)
+        AppendMenuW(m, MF_STRING | (g_label ? MF_CHECKED : 0), IDM_LABEL, L"Show \x201cwk\x201d");
+    else
+        AppendMenuW(m, MF_STRING | MF_GRAYED, IDM_LABEL, L"Show \x201cwk\x201d (needs 125 % display scaling)");
     AppendMenuW(m, MF_STRING | (autorun_enabled() ? MF_CHECKED : 0), IDM_AUTORUN, L"Start with Windows");
     AppendMenuW(m, MF_STRING | (g_busy ? MF_GRAYED : 0), IDM_UPDATE,
                 g_busy ? L"Checking for updates 26" : L"Check for updates");
@@ -585,6 +707,11 @@ static void show_menu(HWND hwnd, int x, int y)
     case IDM_REFRESH: refresh(hwnd); break;
     case IDM_AUTORUN: autorun_set(!autorun_enabled()); break;
     case IDM_UPDATE:  start_update(0); break;
+    case IDM_LABEL:
+        g_label = !g_label;
+        set_setting(L"Label", g_label);
+        update_tray(hwnd, FALSE);
+        break;
     case IDM_EXIT:    DestroyWindow(hwnd); break;
     default:
         if (cmd >= IDM_SIZE && cmd < IDM_SIZE + COUNT(SIZES)) {

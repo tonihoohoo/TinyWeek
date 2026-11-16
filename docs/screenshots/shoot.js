@@ -6,7 +6,7 @@ const {chromium} = require('playwright');
   const p = await b.newPage({viewport: {width: 960, height: 2000}, deviceScaleFactor: 2});
   await p.goto('file://' + __dirname + '/shots.html');
   await p.waitForSelector('body[data-ready]');
-  for (const id of ['hero', 'menu', 'themes', 'grid'])
+  for (const id of ['hero', 'menu', 'themes'])
     await p.locator('#' + id).screenshot({path: `${__dirname}/${id}.png`, omitBackground: true});
   await b.close();
 })();
