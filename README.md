@@ -9,10 +9,30 @@
   One 23 KB <code>.exe</code>. No installer, no runtime, no dependencies.
 </p>
 
----
+<p align="center">
+  <a href="../../releases/latest"><b>Download TinyWeek.exe</b></a>
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/hero.png" width="880" alt="TinyWeek shows week 47 in the Windows taskbar next to the clock, with a tooltip reading Week 47, Monday, 16 November 2026">
+</p>
 
 TinyWeek puts the current week number next to your clock, drawn crisp at the
 taskbar's real pixel size. Hover for the full date, right-click for the menu.
+
+<p align="center">
+  <img src="docs/screenshots/menu.png" width="880" alt="Right-click menu with Show date, Refresh, Size, Weight, Start with Windows and Exit; the Weight submenu offers Light, Regular, Semibold and Bold">
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/themes.png" width="880" alt="The week number in white on a dark taskbar and in black on a light taskbar">
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/grid.png" width="880" alt="Week number 47 at sizes 100, 80 and 60 percent in Light, Regular, Semibold and Bold weights">
+</p>
+
+<sub>Images are illustrations of TinyWeek on a Windows 11 style taskbar.</sub>
 
 ## Features
 
