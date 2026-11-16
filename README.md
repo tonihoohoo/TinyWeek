@@ -6,7 +6,7 @@
 
 <p align="center">
   The ISO 8601 week number in the Windows notification area.<br>
-  One 20 KB <code>.exe</code>. No installer, no runtime, no dependencies.
+  One 22 KB <code>.exe</code>. No installer, no runtime, no dependencies.
 </p>
 
 ---
@@ -23,6 +23,9 @@ taskbar's real pixel size. Hover for the full date, right-click for the menu.
 - **Big, sharp digits at any DPI**: rendered at the tray's native icon size,
   scaled by their true glyph bounds to fill the whole icon, with tight digit
   spacing. Proportions are never stretched.
+- **Matches your system font**: uses the Windows UI font, and on Windows 11
+  Segoe UI Variable, the same font as the taskbar clock.
+- **Adjustable size**: 100 % (largest that fits the icon) down to 60 %.
 - **Follows the taskbar theme**: white digits on a dark taskbar, black on a light one.
 - **Correct ISO 8601 weeks**: weeks start on Monday, and week 1 is the week
   that contains the year's first Thursday (verified for every day 1900–2199).
@@ -92,9 +95,15 @@ and start it again. The startup setting is kept.
 1. Right-click the icon and untick **Start with Windows**.
 2. Choose **Exit**.
 3. Delete the `TinyWeek` folder.
+4. If you changed **Size**, also delete the registry key
+   `HKCU\Software\TinyWeek`, for example in PowerShell:
 
-TinyWeek writes nothing else to your system: no settings files and no other
-registry keys.
+   ```powershell
+   Remove-Item HKCU:\Software\TinyWeek -ErrorAction SilentlyContinue
+   ```
+
+TinyWeek writes nothing else to your system: no files, and no registry keys
+besides the startup entry and the size setting.
 
 ## Usage
 
@@ -102,11 +111,14 @@ registry keys.
 |---|---|
 | Hover | Week number and full date |
 | Double-click | Date dialog |
-| Right-click | Show date · Refresh · Start with Windows · Exit |
+| Right-click | Show date · Refresh · Size · Start with Windows · Exit |
+
+**Size** sets how large the digits are: 100 % is the largest that fits the
+icon, and 90–60 % leave more space around them. The choice is remembered.
 
 The icon updates by itself at midnight, after the PC wakes from sleep, when
 the clock or time zone changes, and when you switch the taskbar between light
-and dark. **Refresh** is only needed if something looks wrong.
+and dark, or when the system font changes. **Refresh** is only needed if something looks wrong.
 
 ## FAQ
 

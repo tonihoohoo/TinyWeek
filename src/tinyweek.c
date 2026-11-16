@@ -18,6 +18,7 @@
 #define IDM_REFRESH 2
 #define IDM_AUTORUN 3
 #define IDM_EXIT   4
+#define IDM_SIZE   10              /* IDM_SIZE + index into SIZES */
 
 static const WCHAR RUN_KEY[] = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 static const WCHAR THEME_KEY[] = L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize";
@@ -26,6 +27,11 @@ static NOTIFYICONDATAW g_nid;
 static HICON g_icon;
 static UINT  g_msgTaskbarCreated;
 static int   g_week;
+static int   g_size = 100;              /* digit size, % of the largest that fits */
+static WCHAR g_face[LF_FACESIZE];       /* font face, follows the system UI font */
+
+static const WCHAR SETTINGS_KEY[] = L"Software\\TinyWeek";
+static const BYTE SIZES[] = {100, 90, 80, 70, 60};
 
 /* The compiler may emit calls to memset for struct initialisation. */
 void *memset(void *d, int c, SIZE_T n)
@@ -68,11 +74,41 @@ static int light_taskbar(void)
     return v != 0;
 }
 
+static int CALLBACK font_found(const LOGFONTW *lf, const TEXTMETRICW *tm, DWORD type, LPARAM lp)
+{
+    *(int *)lp = 1;
+    return 0;
+}
+static int font_exists(HDC dc, const WCHAR *face)
+{
+    LOGFONTW lf = {0};
+    int found = 0;
+    lf.lfCharSet = DEFAULT_CHARSET;
+    lstrcpynW(lf.lfFaceName, face, LF_FACESIZE);
+    EnumFontFamiliesExW(dc, &lf, font_found, (LPARAM)&found, 0);
+    return found;
+}
+
+/* Use the system UI font (the one Windows uses for menus and dialogs). On
+ * Windows 11 that is Segoe UI, while the taskbar clock uses Segoe UI
+ * Variable, so prefer the latter to match the clock next to the icon. */
+static void pick_font(HDC dc)
+{
+    NONCLIENTMETRICSW ncm = {0};
+    ncm.cbSize = sizeof ncm;
+    if (SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, sizeof ncm, &ncm, 0) && ncm.lfMessageFont.lfFaceName[0])
+        lstrcpynW(g_face, ncm.lfMessageFont.lfFaceName, LF_FACESIZE);
+    else
+        lstrcpynW(g_face, L"Segoe UI", LF_FACESIZE);
+    if (!lstrcmpiW(g_face, L"Segoe UI") && font_exists(dc, L"Segoe UI Variable Display"))
+        lstrcpynW(g_face, L"Segoe UI Variable Display", LF_FACESIZE);
+}
+
 static HFONT digit_font(int em)
 {
     return CreateFontW(-em, 0, 0, 0, FW_BOLD, 0, 0, 0, DEFAULT_CHARSET,
                        OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS,
-                       ANTIALIASED_QUALITY, DEFAULT_PITCH, L"Segoe UI");
+                       ANTIALIASED_QUALITY, DEFAULT_PITCH, g_face);
 }
 
 /* Bounding box of the pixels drawn into the scratch DIB. */
@@ -90,7 +126,7 @@ static void ink_bounds(const DWORD *px, int stride, RECT *ink)
 }
 
 /* Measures every digit's own ink box at em size `em`. Returns the width of
- * the number with digits placed `gap` px apart; *top/*bottom = ink rows. */
+ * the number with digits placed `gap` px apart; top/bottom = ink rows. */
 static int measure(HDC dc, DWORD *px, int stride, const WCHAR *s, int n,
                    int em, int gap, RECT *k, int *top, int *bottom)
 {
@@ -114,8 +150,9 @@ static int measure(HDC dc, DWORD *px, int stride, const WCHAR *s, int n,
 static HICON make_icon(int week)
 {
     int S = GetSystemMetrics(SM_CXSMICON);          /* real tray size at current DPI */
+    int T = S * g_size / 100;                       /* target box for the digits */
     int W = S * 2;                                  /* scratch canvas for measuring */
-    int gap = S >= 24 ? S / 12 : 1;                 /* tight but readable digit spacing */
+    int gap = T >= 24 ? T / 12 : 1;                 /* tight but readable digit spacing */
     WCHAR txt[4];
     int n = wsprintfW(txt, L"%d", week);
 
@@ -131,6 +168,7 @@ static HICON make_icon(int week)
     HGDIOBJ oldBmp = SelectObject(dc, scratch);
     SetBkMode(dc, TRANSPARENT);
     SetTextColor(dc, RGB(255, 255, 255));
+    pick_font(dc);
 
     /* Largest font whose true ink (not the font cell) fits the whole icon.
      * Uniform scaling only: the glyphs keep their proportions. The gap
@@ -139,11 +177,11 @@ static HICON make_icon(int week)
     int top, bottom, w, h, em = S;
     w = measure(dc, px, W, txt, n, em, gap, k, &top, &bottom);
     h = bottom - top + 1;
-    em = (w * h > 0) ? (w > h ? em * S / w : em * S / h) + 1 : S;
+    em = (w * h > 0) ? (w > h ? em * T / w : em * T / h) + 1 : T;
     for (;;) {                                       /* hinting may shift a pixel */
         w = measure(dc, px, W, txt, n, em, gap, k, &top, &bottom);
         h = bottom - top + 1;
-        if ((w <= S && h <= S) || em <= 4) break;
+        if ((w <= T && h <= T) || em <= 4) break;
         em--;
     }
 
@@ -247,6 +285,25 @@ static void autorun_set(BOOL enable)
     RegCloseKey(k);
 }
 
+/* Digit size is the only setting: HKCU\\Software\\TinyWeek, value "Size". */
+static void load_size(void)
+{
+    DWORD v = 0, cb = sizeof v;
+    if (RegGetValueW(HKEY_CURRENT_USER, SETTINGS_KEY, L"Size", RRF_RT_REG_DWORD, NULL, &v, &cb))
+        return;
+    for (int i = 0; i < (int)sizeof SIZES; i++)
+        if (SIZES[i] == v) g_size = v;
+}
+static void save_size(void)
+{
+    HKEY k;
+    DWORD v = g_size;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, SETTINGS_KEY, 0, NULL, 0, KEY_SET_VALUE, NULL, &k, NULL))
+        return;
+    RegSetValueExW(k, L"Size", 0, REG_DWORD, (BYTE *)&v, sizeof v);
+    RegCloseKey(k);
+}
+
 static void show_date(HWND hwnd)
 {
     SYSTEMTIME t; WCHAR date[80], msg[128];
@@ -261,6 +318,13 @@ static void show_menu(HWND hwnd, int x, int y)
     HMENU m = CreatePopupMenu();
     AppendMenuW(m, MF_STRING, IDM_SHOW, L"Show date");
     AppendMenuW(m, MF_STRING, IDM_REFRESH, L"Refresh");
+    HMENU sz = CreatePopupMenu();
+    for (int i = 0; i < (int)sizeof SIZES; i++) {
+        WCHAR label[24];
+        wsprintfW(label, i ? L"%d %%" : L"%d %% (largest)", SIZES[i]);
+        AppendMenuW(sz, MF_STRING | (SIZES[i] == g_size ? MF_CHECKED : 0), IDM_SIZE + i, label);
+    }
+    AppendMenuW(m, MF_POPUP, (UINT_PTR)sz, L"Size");
     AppendMenuW(m, MF_STRING | (autorun_enabled() ? MF_CHECKED : 0), IDM_AUTORUN, L"Start with Windows");
     AppendMenuW(m, MF_SEPARATOR, 0, NULL);
     AppendMenuW(m, MF_STRING, IDM_EXIT, L"Exit");
@@ -274,6 +338,12 @@ static void show_menu(HWND hwnd, int x, int y)
     case IDM_REFRESH: refresh(hwnd); break;
     case IDM_AUTORUN: autorun_set(!autorun_enabled()); break;
     case IDM_EXIT:    DestroyWindow(hwnd); break;
+    default:
+        if (cmd >= IDM_SIZE && cmd < IDM_SIZE + sizeof SIZES) {
+            g_size = SIZES[cmd - IDM_SIZE];
+            save_size();
+            update_tray(hwnd, FALSE);
+        }
     }
 }
 
@@ -294,7 +364,7 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case WM_POWERBROADCAST:            /* resumed from sleep/hibernate */
         if (wp == PBT_APMRESUMEAUTOMATIC) refresh(hwnd);
         return TRUE;
-    case WM_SETTINGCHANGE:             /* light/dark theme, DPI, locale */
+    case WM_SETTINGCHANGE:             /* light/dark theme, fonts, DPI, locale */
     case WM_DISPLAYCHANGE:
         update_tray(hwnd, FALSE); return 0;
     case WM_DESTROY:
@@ -321,6 +391,7 @@ static int run(void)
     wc.lpszClassName = APP_NAME;
     RegisterClassW(&wc);
     g_msgTaskbarCreated = RegisterWindowMessageW(L"TaskbarCreated");
+    load_size();
 
     /* Hidden top-level window (never shown): receives tray + broadcast messages. */
     HWND hwnd = CreateWindowExW(WS_EX_TOOLWINDOW, APP_NAME, APP_NAME, WS_POPUP,
