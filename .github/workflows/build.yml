@@ -1,9 +1,12 @@
 name: build
 
+# Every push and pull request builds TinyWeek.exe.
+# A push to main whose VERSION file names a version that has no release yet
+# also tags that commit as v<VERSION> and publishes the release.
+
 on:
   push:
     branches: [main]
-    tags: ['v*']
   pull_request:
   workflow_dispatch:
 
@@ -21,7 +24,6 @@ jobs:
 
       - name: Build
         run: |
-          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then export VERSION="${GITHUB_REF_NAME#v}"; fi
           ./build.sh
           cd build && sha256sum TinyWeek.exe > TinyWeek.exe.sha256 && cat TinyWeek.exe.sha256
 
@@ -32,8 +34,15 @@ jobs:
             build/TinyWeek.exe
             build/TinyWeek.exe.sha256
 
-      - name: Publish release
-        if: github.ref_type == 'tag'
+      - name: Publish release for a new VERSION
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" build/TinyWeek.exe build/TinyWeek.exe.sha256 --title "TinyWeek $GITHUB_REF_NAME" --generate-notes
+        run: |
+          TAG="v$(cat VERSION)"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "$TAG is already released, nothing to publish."
+          else
+            gh release create "$TAG" build/TinyWeek.exe build/TinyWeek.exe.sha256 \
+              --target "$GITHUB_SHA" --title "TinyWeek $TAG" --generate-notes
+          fi

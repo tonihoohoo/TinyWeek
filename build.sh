@@ -2,11 +2,11 @@
 # Build TinyWeek.exe with MinGW-w64.
 #   Linux:   sudo apt install gcc-mingw-w64-x86-64 && ./build.sh
 #   Windows: MSYS2 "UCRT64" shell: pacman -S mingw-w64-ucrt-x86_64-gcc && CROSS= ./build.sh
-# Optional: VERSION=1.2.3 ./build.sh
+# The version comes from the VERSION file (override: VERSION=1.2.3 ./build.sh).
 set -e
 cd "$(dirname "$0")"
 CROSS=${CROSS-x86_64-w64-mingw32-}
-VERSION=${VERSION:-1.0.0}
+VERSION=${VERSION:-$(cat VERSION)}
 V4=$(echo "$VERSION" | awk -F. '{printf "%d,%d,%d,0", $1, $2, $3}')
 mkdir -p build
 

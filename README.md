@@ -156,8 +156,11 @@ pacman -S mingw-w64-ucrt-x86_64-gcc
 CROSS= ./build.sh
 ```
 
-The output is `build/TinyWeek.exe`. Pushing a `v*` tag builds the executable in
-GitHub Actions and publishes it as a release.
+The output is `build/TinyWeek.exe`.
+
+GitHub Actions builds the executable on every push. To publish a release,
+change the number in the `VERSION` file and push to `main`: the workflow tags
+the commit as `v<version>` and attaches the exe and its SHA-256 checksum.
 
 ## Logo
 
