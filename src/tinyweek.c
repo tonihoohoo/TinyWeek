@@ -19,6 +19,7 @@
 #define IDM_AUTORUN 3
 #define IDM_EXIT   4
 #define IDM_SIZE   10              /* IDM_SIZE + index into SIZES */
+#define IDM_WEIGHT 20              /* IDM_WEIGHT + index into WEIGHTS */
 
 static const WCHAR RUN_KEY[] = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 static const WCHAR THEME_KEY[] = L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize";
@@ -28,10 +29,14 @@ static HICON g_icon;
 static UINT  g_msgTaskbarCreated;
 static int   g_week;
 static int   g_size = 100;              /* digit size, % of the largest that fits */
+static int   g_weight = FW_BOLD;        /* digit font weight */
 static WCHAR g_face[LF_FACESIZE];       /* font face, follows the system UI font */
 
 static const WCHAR SETTINGS_KEY[] = L"Software\\TinyWeek";
 static const BYTE SIZES[] = {100, 90, 80, 70, 60};
+static const short WEIGHTS[] = {FW_LIGHT, FW_NORMAL, FW_SEMIBOLD, FW_BOLD};
+static const WCHAR *const WEIGHT_NAMES[] = {L"Light", L"Regular", L"Semibold", L"Bold"};
+#define COUNT(a) ((int)(sizeof(a) / sizeof((a)[0])))
 
 /* The compiler may emit calls to memset for struct initialisation. */
 void *memset(void *d, int c, SIZE_T n)
@@ -106,7 +111,7 @@ static void pick_font(HDC dc)
 
 static HFONT digit_font(int em)
 {
-    return CreateFontW(-em, 0, 0, 0, FW_BOLD, 0, 0, 0, DEFAULT_CHARSET,
+    return CreateFontW(-em, 0, 0, 0, g_weight, 0, 0, 0, DEFAULT_CHARSET,
                        OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS,
                        ANTIALIASED_QUALITY, DEFAULT_PITCH, g_face);
 }
@@ -285,23 +290,29 @@ static void autorun_set(BOOL enable)
     RegCloseKey(k);
 }
 
-/* Digit size is the only setting: HKCU\\Software\\TinyWeek, value "Size". */
-static void load_size(void)
+/* Settings: HKCU\\Software\\TinyWeek, DWORD values "Size" and "Weight". */
+static DWORD get_setting(const WCHAR *name, DWORD def)
 {
-    DWORD v = 0, cb = sizeof v;
-    if (RegGetValueW(HKEY_CURRENT_USER, SETTINGS_KEY, L"Size", RRF_RT_REG_DWORD, NULL, &v, &cb))
-        return;
-    for (int i = 0; i < (int)sizeof SIZES; i++)
-        if (SIZES[i] == v) g_size = v;
+    DWORD v, cb = sizeof v;
+    return RegGetValueW(HKEY_CURRENT_USER, SETTINGS_KEY, name, RRF_RT_REG_DWORD,
+                        NULL, &v, &cb) ? def : v;
 }
-static void save_size(void)
+static void set_setting(const WCHAR *name, DWORD v)
 {
     HKEY k;
-    DWORD v = g_size;
     if (RegCreateKeyExW(HKEY_CURRENT_USER, SETTINGS_KEY, 0, NULL, 0, KEY_SET_VALUE, NULL, &k, NULL))
         return;
-    RegSetValueExW(k, L"Size", 0, REG_DWORD, (BYTE *)&v, sizeof v);
+    RegSetValueExW(k, name, 0, REG_DWORD, (BYTE *)&v, sizeof v);
     RegCloseKey(k);
+}
+static void load_settings(void)
+{
+    DWORD v = get_setting(L"Size", 100);
+    for (int i = 0; i < COUNT(SIZES); i++)
+        if (SIZES[i] == v) g_size = v;
+    v = get_setting(L"Weight", FW_BOLD);
+    for (int i = 0; i < COUNT(WEIGHTS); i++)
+        if (WEIGHTS[i] == (int)v) g_weight = v;
 }
 
 static void show_date(HWND hwnd)
@@ -319,12 +330,16 @@ static void show_menu(HWND hwnd, int x, int y)
     AppendMenuW(m, MF_STRING, IDM_SHOW, L"Show date");
     AppendMenuW(m, MF_STRING, IDM_REFRESH, L"Refresh");
     HMENU sz = CreatePopupMenu();
-    for (int i = 0; i < (int)sizeof SIZES; i++) {
+    for (int i = 0; i < COUNT(SIZES); i++) {
         WCHAR label[24];
         wsprintfW(label, i ? L"%d %%" : L"%d %% (largest)", SIZES[i]);
         AppendMenuW(sz, MF_STRING | (SIZES[i] == g_size ? MF_CHECKED : 0), IDM_SIZE + i, label);
     }
     AppendMenuW(m, MF_POPUP, (UINT_PTR)sz, L"Size");
+    HMENU wt = CreatePopupMenu();
+    for (int i = 0; i < COUNT(WEIGHTS); i++)
+        AppendMenuW(wt, MF_STRING | (WEIGHTS[i] == g_weight ? MF_CHECKED : 0), IDM_WEIGHT + i, WEIGHT_NAMES[i]);
+    AppendMenuW(m, MF_POPUP, (UINT_PTR)wt, L"Weight");
     AppendMenuW(m, MF_STRING | (autorun_enabled() ? MF_CHECKED : 0), IDM_AUTORUN, L"Start with Windows");
     AppendMenuW(m, MF_SEPARATOR, 0, NULL);
     AppendMenuW(m, MF_STRING, IDM_EXIT, L"Exit");
@@ -339,9 +354,13 @@ static void show_menu(HWND hwnd, int x, int y)
     case IDM_AUTORUN: autorun_set(!autorun_enabled()); break;
     case IDM_EXIT:    DestroyWindow(hwnd); break;
     default:
-        if (cmd >= IDM_SIZE && cmd < IDM_SIZE + sizeof SIZES) {
+        if (cmd >= IDM_SIZE && cmd < IDM_SIZE + COUNT(SIZES)) {
             g_size = SIZES[cmd - IDM_SIZE];
-            save_size();
+            set_setting(L"Size", g_size);
+            update_tray(hwnd, FALSE);
+        } else if (cmd >= IDM_WEIGHT && cmd < IDM_WEIGHT + COUNT(WEIGHTS)) {
+            g_weight = WEIGHTS[cmd - IDM_WEIGHT];
+            set_setting(L"Weight", g_weight);
             update_tray(hwnd, FALSE);
         }
     }
@@ -391,7 +410,7 @@ static int run(void)
     wc.lpszClassName = APP_NAME;
     RegisterClassW(&wc);
     g_msgTaskbarCreated = RegisterWindowMessageW(L"TaskbarCreated");
-    load_size();
+    load_settings();
 
     /* Hidden top-level window (never shown): receives tray + broadcast messages. */
     HWND hwnd = CreateWindowExW(WS_EX_TOOLWINDOW, APP_NAME, APP_NAME, WS_POPUP,

@@ -6,7 +6,7 @@
 
 <p align="center">
   The ISO 8601 week number in the Windows notification area.<br>
-  One 22 KB <code>.exe</code>. No installer, no runtime, no dependencies.
+  One 23 KB <code>.exe</code>. No installer, no runtime, no dependencies.
 </p>
 
 ---
@@ -25,7 +25,8 @@ taskbar's real pixel size. Hover for the full date, right-click for the menu.
   spacing. Proportions are never stretched.
 - **Matches your system font**: uses the Windows UI font, and on Windows 11
   Segoe UI Variable, the same font as the taskbar clock.
-- **Adjustable size**: 100 % (largest that fits the icon) down to 60 %.
+- **Adjustable size and weight**: size from 100 % (largest that fits the
+  icon) down to 60 %, weight Light, Regular, Semibold or Bold.
 - **Follows the taskbar theme**: white digits on a dark taskbar, black on a light one.
 - **Correct ISO 8601 weeks**: weeks start on Monday, and week 1 is the week
   that contains the year's first Thursday (verified for every day 1900–2199).
@@ -95,7 +96,7 @@ and start it again. The startup setting is kept.
 1. Right-click the icon and untick **Start with Windows**.
 2. Choose **Exit**.
 3. Delete the `TinyWeek` folder.
-4. If you changed **Size**, also delete the registry key
+4. If you changed **Size** or **Weight**, also delete the registry key
    `HKCU\Software\TinyWeek`, for example in PowerShell:
 
    ```powershell
@@ -103,7 +104,7 @@ and start it again. The startup setting is kept.
    ```
 
 TinyWeek writes nothing else to your system: no files, and no registry keys
-besides the startup entry and the size setting.
+besides the startup entry and the size and weight settings.
 
 ## Usage
 
@@ -111,10 +112,12 @@ besides the startup entry and the size setting.
 |---|---|
 | Hover | Week number and full date |
 | Double-click | Date dialog |
-| Right-click | Show date · Refresh · Size · Start with Windows · Exit |
+| Right-click | Show date · Refresh · Size · Weight · Start with Windows · Exit |
 
 **Size** sets how large the digits are: 100 % is the largest that fits the
-icon, and 90–60 % leave more space around them. The choice is remembered.
+icon, and 90–60 % leave more space around them. **Weight** sets the stroke
+thickness: Light, Regular, Semibold or Bold (default). Both choices are
+remembered.
 
 The icon updates by itself at midnight, after the PC wakes from sleep, when
 the clock or time zone changes, and when you switch the taskbar between light
