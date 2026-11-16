@@ -21,6 +21,6 @@ ${CROSS}gcc -Os -s -DUNICODE -D_UNICODE -Wall -DTW_VERSION_STR="\"$VERSION\"" \
   -Wl,--gc-sections -Wl,--file-alignment=512 -Wl,--section-alignment=4096 \
   -Wl,--no-insert-timestamp -Wl,--build-id=none \
   -o build/TinyWeek.exe src/tinyweek.c build/tinyweek.res \
-  -lkernel32 -luser32 -lgdi32 -lshell32 -ladvapi32 -lwinhttp -lbcrypt
+  -lkernel32 -luser32 -lgdi32 -lshell32 -ladvapi32 -lwinhttp -lbcrypt -ldwmapi
 
 ls -l build/TinyWeek.exe

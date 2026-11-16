@@ -4,6 +4,13 @@ Each release on GitHub shows the section for its version, and TinyWeek shows
 it in **Check for updates** before you update. Add a section here before
 changing `VERSION`; the release is not published without one.
 
+## 1.3.0
+
+- Changed: the date window and all update messages follow the Windows light or
+  dark mode, with the Windows accent colour on the main button.
+- Removed: **Refresh** from the menu. The week number updates by itself at
+  midnight, after sleep and when the clock changes.
+
 ## 1.2.1
 
 - Changed: the "wk" label is larger, so it is easier to read next to the

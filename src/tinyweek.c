@@ -12,6 +12,7 @@
 #include <shellapi.h>
 #include <winhttp.h>
 #include <bcrypt.h>
+#include <dwmapi.h>
 
 #ifndef TW_VERSION_STR
 #define TW_VERSION_STR "0.0.0"                  /* set by build.sh from VERSION */
@@ -22,7 +23,6 @@
 #define WM_TRAY    (WM_APP + 1)
 #define ID_TIMER   1
 #define IDM_SHOW   1
-#define IDM_REFRESH 2
 #define IDM_AUTORUN 3
 #define IDM_EXIT   4
 #define IDM_SIZE   10              /* IDM_SIZE + index into SIZES */
@@ -364,13 +364,227 @@ static void load_settings(void)
         if (WEIGHTS[i] == (int)v) g_weight = v;
 }
 
+/* ---------- Themed dialog ----------
+ * MessageBox cannot be dark, so TinyWeek draws its own small dialog in the
+ * Windows 11 style. It follows the apps light/dark setting and uses the
+ * Windows accent colour for the main button. */
+static struct {
+    const WCHAR *heading, *body;
+    int result, done, dpi, dark;
+    HFONT fHead, fBody;
+    HBRUSH bgContent, bgFooter;
+    COLORREF text, accent;
+    RECT rHead, rBody;
+    int footerY, iconSz, pad;
+    HICON icon;
+    HWND hwnd;
+} D;
+
+#define SC(x) MulDiv((x), D.dpi, 96)
+
+static DWORD reg_dword(const WCHAR *key, const WCHAR *name, DWORD def)
+{
+    DWORD v, cb = sizeof v;
+    return RegGetValueW(HKEY_CURRENT_USER, key, name, RRF_RT_REG_DWORD, NULL, &v, &cb) ? def : v;
+}
+
+static void draw_button(const DRAWITEMSTRUCT *di)
+{
+    int primary = di->CtlID == IDOK, pressed = di->itemState & ODS_SELECTED;
+    int focus = (di->itemState & ODS_FOCUS) && !(di->itemState & ODS_NOFOCUSRECT);
+    COLORREF fill, border, fg;
+    if (primary) {
+        fill = D.accent;
+        int lum = GetRValue(fill) * 299 + GetGValue(fill) * 587 + GetBValue(fill) * 114;
+        fg = lum > 150000 ? RGB(0, 0, 0) : RGB(255, 255, 255);
+        border = fill;
+        if (pressed) fill = RGB(GetRValue(fill) * 4 / 5, GetGValue(fill) * 4 / 5, GetBValue(fill) * 4 / 5);
+    } else if (D.dark) {
+        fill = pressed ? RGB(50, 50, 50) : RGB(55, 55, 55); border = RGB(70, 70, 70); fg = RGB(255, 255, 255);
+    } else {
+        fill = pressed ? RGB(240, 240, 240) : RGB(251, 251, 251); border = RGB(214, 214, 214); fg = RGB(26, 26, 26);
+    }
+    if (focus) border = D.text;
+    HDC dc = di->hDC;
+    RECT r = di->rcItem;
+    FillRect(dc, &r, D.bgFooter);
+    HBRUSH b = CreateSolidBrush(fill);
+    HPEN pen = CreatePen(PS_SOLID, focus ? SC(2) : 1, border);
+    HGDIOBJ ob = SelectObject(dc, b), op = SelectObject(dc, pen);
+    RoundRect(dc, r.left, r.top, r.right, r.bottom, SC(8), SC(8));
+    SelectObject(dc, ob); SelectObject(dc, op);
+    DeleteObject(b); DeleteObject(pen);
+    WCHAR label[40];
+    GetWindowTextW(di->hwndItem, label, 40);
+    HGDIOBJ of = SelectObject(dc, D.fBody);
+    SetBkMode(dc, TRANSPARENT);
+    SetTextColor(dc, fg);
+    DrawTextW(dc, label, -1, &r, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+    SelectObject(dc, of);
+}
+
+static LRESULT CALLBACK dlg_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
+{
+    switch (msg) {
+    case WM_PAINT: {
+        PAINTSTRUCT ps;
+        RECT rc, top, bottom;
+        HDC dc = BeginPaint(hwnd, &ps);
+        GetClientRect(hwnd, &rc);
+        top = bottom = rc;
+        top.bottom = bottom.top = D.footerY;
+        FillRect(dc, &top, D.bgContent);
+        FillRect(dc, &bottom, D.bgFooter);
+        DrawIconEx(dc, D.pad, D.pad, D.icon, D.iconSz, D.iconSz, 0, NULL, DI_NORMAL);
+        SetBkMode(dc, TRANSPARENT);
+        SetTextColor(dc, D.text);
+        HGDIOBJ of = SelectObject(dc, D.fHead);
+        DrawTextW(dc, D.heading, -1, &D.rHead, DT_WORDBREAK | DT_NOPREFIX);
+        SelectObject(dc, D.fBody);
+        DrawTextW(dc, D.body, -1, &D.rBody, DT_WORDBREAK | DT_NOPREFIX | DT_EXPANDTABS);
+        SelectObject(dc, of);
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+    case WM_DRAWITEM:
+        draw_button((const DRAWITEMSTRUCT *)lp);
+        return TRUE;
+    case WM_CTLCOLORBTN:
+        return (LRESULT)D.bgFooter;
+    case WM_COMMAND:
+        if (HIWORD(wp) == BN_CLICKED) {
+            D.result = LOWORD(wp) == IDOK ? 1 : 2;
+            D.done = 1;
+            DestroyWindow(hwnd);
+        }
+        return 0;
+    case WM_CLOSE:
+        D.result = 2; D.done = 1;
+        DestroyWindow(hwnd);
+        return 0;
+    }
+    return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
+/* Shows a modal dialog. Returns 1 for the main button, 2 for the other
+ * button, Esc or close. `no` may be NULL for a single-button dialog. */
+static int themed_dialog(const WCHAR *heading, const WCHAR *body, const WCHAR *yes, const WCHAR *no)
+{
+    if (D.hwnd) { SetForegroundWindow(D.hwnd); return 2; }   /* one at a time */
+    HINSTANCE inst = GetModuleHandleW(NULL);
+    static ATOM cls;
+    if (!cls) {
+        WNDCLASSEXW wc = {0};
+        wc.cbSize = sizeof wc;
+        wc.lpfnWndProc = dlg_proc;
+        wc.hInstance = inst;
+        wc.hCursor = LoadCursorW(NULL, (LPCWSTR)IDC_ARROW);
+        wc.hIcon = LoadIconW(inst, MAKEINTRESOURCEW(1));
+        wc.lpszClassName = L"TinyWeekDialog";
+        cls = RegisterClassExW(&wc);
+    }
+
+    HDC sdc = GetDC(NULL);
+    D.dpi = GetDeviceCaps(sdc, LOGPIXELSY);
+    D.heading = heading; D.body = body; D.done = 0; D.result = 2;
+    D.dark = reg_dword(THEME_KEY, L"AppsUseLightTheme", 1) == 0;
+    D.text = D.dark ? RGB(255, 255, 255) : RGB(26, 26, 26);
+    D.bgContent = CreateSolidBrush(D.dark ? RGB(43, 43, 43) : RGB(255, 255, 255));
+    D.bgFooter = CreateSolidBrush(D.dark ? RGB(32, 32, 32) : RGB(243, 243, 243));
+    D.accent = reg_dword(L"Software\\Microsoft\\Windows\\DWM", L"AccentColor", 0xFFD77800) & 0xFFFFFF;
+
+    NONCLIENTMETRICSW ncm = {0};
+    ncm.cbSize = sizeof ncm;
+    SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, sizeof ncm, &ncm, 0);
+    D.fBody = CreateFontIndirectW(&ncm.lfMessageFont);
+    ncm.lfMessageFont.lfHeight = ncm.lfMessageFont.lfHeight * 3 / 2;
+    ncm.lfMessageFont.lfWeight = FW_SEMIBOLD;
+    D.fHead = CreateFontIndirectW(&ncm.lfMessageFont);
+
+    /* Layout */
+    D.pad = SC(24); D.iconSz = SC(32);
+    int textX = D.pad + D.iconSz + SC(16), maxW = SC(400);
+    int btnH = SC(32), btnGap = SC(8), btnW[2] = {0, 0};
+    SetRect(&D.rHead, textX, D.pad, textX + maxW, D.pad);
+    HGDIOBJ of = SelectObject(sdc, D.fHead);
+    DrawTextW(sdc, heading, -1, &D.rHead, DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX);
+    SetRect(&D.rBody, textX, D.rHead.bottom + SC(8), textX + maxW, D.rHead.bottom + SC(8));
+    SelectObject(sdc, D.fBody);
+    DrawTextW(sdc, body, -1, &D.rBody, DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX | DT_EXPANDTABS);
+    for (int i = 0; i < 2; i++) {
+        const WCHAR *t = i ? no : yes;
+        RECT r = {0};
+        if (!t) continue;
+        DrawTextW(sdc, t, -1, &r, DT_CALCRECT | DT_SINGLELINE | DT_NOPREFIX);
+        btnW[i] = r.right + SC(40) > SC(110) ? r.right + SC(40) : SC(110);
+    }
+    SelectObject(sdc, of);
+    ReleaseDC(NULL, sdc);
+
+    int textR = D.rHead.right > D.rBody.right ? D.rHead.right : D.rBody.right;
+    int w = textR + D.pad, buttons = btnW[0] + btnW[1] + (no ? btnGap : 0) + 2 * D.pad;
+    if (w < SC(380)) w = SC(380);
+    if (w < buttons) w = buttons;
+    D.footerY = (D.rBody.bottom > D.pad + D.iconSz ? D.rBody.bottom : D.pad + D.iconSz) + D.pad;
+    int h = D.footerY + btnH + 2 * D.pad;
+
+    /* Window, centred on the monitor under the mouse */
+    DWORD style = WS_POPUP | WS_CAPTION | WS_SYSMENU, ex = WS_EX_DLGMODALFRAME | WS_EX_APPWINDOW;
+    RECT wr = {0, 0, w, h};
+    AdjustWindowRectEx(&wr, style, FALSE, ex);
+    POINT pt;
+    GetCursorPos(&pt);
+    MONITORINFO mi = {0};
+    mi.cbSize = sizeof mi;
+    GetMonitorInfoW(MonitorFromPoint(pt, MONITOR_DEFAULTTOPRIMARY), &mi);
+    int ww = wr.right - wr.left, wh = wr.bottom - wr.top;
+    int x = (mi.rcWork.left + mi.rcWork.right - ww) / 2, y = (mi.rcWork.top + mi.rcWork.bottom - wh) / 2;
+    D.icon = (HICON)LoadImageW(inst, MAKEINTRESOURCEW(1), IMAGE_ICON, D.iconSz, D.iconSz, 0);
+    HWND dlg = CreateWindowExW(ex, L"TinyWeekDialog", L"TinyWeek", style, x, y, ww, wh,
+                               NULL, NULL, inst, NULL);
+    D.hwnd = dlg;
+    BOOL dark = D.dark;                              /* dark title bar */
+    if (DwmSetWindowAttribute(dlg, 20, &dark, sizeof dark))
+        DwmSetWindowAttribute(dlg, 19, &dark, sizeof dark);
+
+    int bx = w - D.pad - btnW[0] - (no ? btnGap + btnW[1] : 0), by = D.footerY + D.pad;
+    HWND bYes = CreateWindowExW(0, L"BUTTON", yes, WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
+                                bx, by, btnW[0], btnH, dlg, (HMENU)IDOK, inst, NULL);
+    if (no)
+        CreateWindowExW(0, L"BUTTON", no, WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
+                        bx + btnW[0] + btnGap, by, btnW[1], btnH, dlg, (HMENU)IDCANCEL, inst, NULL);
+    /* Focus outlines only after keyboard use, as in standard dialogs. */
+    SendMessageW(dlg, WM_CHANGEUISTATE, MAKEWPARAM(UIS_SET, UISF_HIDEFOCUS | UISF_HIDEACCEL), 0);
+    ShowWindow(dlg, SW_SHOW);
+    SetForegroundWindow(dlg);
+    SetFocus(bYes);
+
+    MSG m;
+    while (!D.done && GetMessageW(&m, NULL, 0, 0) > 0) {
+        if (m.message == WM_KEYDOWN && m.wParam == VK_ESCAPE && IsChild(dlg, m.hwnd)) {
+            SendMessageW(dlg, WM_CLOSE, 0, 0);
+            continue;
+        }
+        if (!IsDialogMessageW(dlg, &m)) {
+            TranslateMessage(&m);
+            DispatchMessageW(&m);
+        }
+    }
+    if (!D.done) PostQuitMessage(0);                 /* app is exiting */
+    D.hwnd = NULL;
+    DestroyIcon(D.icon);
+    DeleteObject(D.fHead); DeleteObject(D.fBody);
+    DeleteObject(D.bgContent); DeleteObject(D.bgFooter);
+    return D.result;
+}
+
 static void show_date(HWND hwnd)
 {
-    SYSTEMTIME t; WCHAR date[80], msg[128];
+    SYSTEMTIME t; WCHAR date[80], head[32];
     GetLocalTime(&t);
     long_date(&t, date, 80);
-    wsprintfW(msg, L"Week %d\n%s", iso_week(&t), date);
-    MessageBoxW(hwnd, msg, L"TinyWeek", MB_OK | MB_ICONINFORMATION);
+    wsprintfW(head, L"Week %d", iso_week(&t));
+    themed_dialog(head, date, L"OK", NULL);
 }
 
 /* ---------- Dark context menu ----------
@@ -626,9 +840,9 @@ static void install_update(HWND hwnd)
         DeleteFileW(self);                       /* roll back */
         MoveFileExW(old, self, 0);
     }
-    if (MessageBoxW(hwnd, L"TinyWeek could not replace its own file, for example because "
-                    L"the folder needs admin rights.\n\nOpen the download page instead?",
-                    L"TinyWeek", MB_YESNO | MB_ICONWARNING) == IDYES)
+    if (themed_dialog(L"Could not update", L"TinyWeek could not replace its own file, for example "
+                      L"because the folder needs admin rights.\n\nOpen the download page instead?",
+                      L"Open download page", L"Close") == 1)
         open_releases();
     /* the icon may have been removed above: bring it back */
     update_tray(hwnd, TRUE);
@@ -641,19 +855,17 @@ static void on_update_result(HWND hwnd, WPARAM result)
     switch (result) {
     case UPD_LATEST:
         wsprintfW(msg, L"You have the latest version, TinyWeek %S.", TW_VERSION_STR);
-        MessageBoxW(hwnd, msg, L"TinyWeek", MB_OK | MB_ICONINFORMATION);
+        themed_dialog(L"TinyWeek is up to date", msg, L"OK", NULL);
         break;
     case UPD_NEWER:
         {
             static WCHAR ask[1400];
-            wsprintfW(ask, L"TinyWeek %S is available. You have %S.\n\n", g_latest, TW_VERSION_STR);
+            wsprintfW(ask, L"TinyWeek %S is available. You have %S.", g_latest, TW_VERSION_STR);
             if (g_notes[0]) {
-                lstrcatW(ask, L"What\x2019s new:\n");
+                lstrcatW(ask, L"\n\nWhat\x2019s new:\n");
                 lstrcatW(ask, g_notes);
-                lstrcatW(ask, L"\n\n");
             }
-            lstrcatW(ask, L"Update now?");
-            if (MessageBoxW(hwnd, ask, L"TinyWeek update", MB_YESNO | MB_ICONQUESTION) == IDYES)
+            if (themed_dialog(L"Update available", ask, L"Update", L"Not now") == 1)
                 start_update((LPVOID)1);
         }
         break;
@@ -662,13 +874,13 @@ static void on_update_result(HWND hwnd, WPARAM result)
         if (g_dl) { VirtualFree(g_dl, 0, MEM_RELEASE); g_dl = NULL; }
         break;
     case UPD_BAD_FILE:
-        MessageBoxW(hwnd, L"The downloaded file did not match its published checksum, "
-                    L"so it was not installed.", L"TinyWeek", MB_OK | MB_ICONWARNING);
+        themed_dialog(L"Update not installed", L"The downloaded file did not match its published "
+                      L"checksum, so it was not installed.", L"OK", NULL);
         break;
     default:
-        if (MessageBoxW(hwnd, L"Could not reach GitHub to check for updates.\n\n"
-                        L"Open the download page in your browser?",
-                        L"TinyWeek", MB_YESNO | MB_ICONWARNING) == IDYES)
+        if (themed_dialog(L"Could not check for updates", L"TinyWeek could not reach GitHub. "
+                          L"Check your internet connection, or open the download page in your browser.",
+                          L"Open download page", L"Close") == 1)
             open_releases();
     }
 }
@@ -677,7 +889,6 @@ static void show_menu(HWND hwnd, int x, int y)
 {
     HMENU m = CreatePopupMenu();
     AppendMenuW(m, MF_STRING, IDM_SHOW, L"Show date");
-    AppendMenuW(m, MF_STRING, IDM_REFRESH, L"Refresh");
     HMENU sz = CreatePopupMenu();
     for (int i = 0; i < COUNT(SIZES); i++) {
         WCHAR label[24];
@@ -702,7 +913,6 @@ static void show_menu(HWND hwnd, int x, int y)
     DestroyMenu(m);
     switch (cmd) {
     case IDM_SHOW:    show_date(hwnd); break;
-    case IDM_REFRESH: refresh(hwnd); break;
     case IDM_AUTORUN: autorun_set(!autorun_enabled()); break;
     case IDM_UPDATE:  start_update(0); break;
     case IDM_LABEL:

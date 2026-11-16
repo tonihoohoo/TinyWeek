@@ -18,7 +18,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/menu.png" width="880" alt="Right-click menu with Show date, Refresh, Size, Weight, Show wk, Start with Windows, Check for updates and Exit; the Weight submenu offers Light, Regular, Semibold and Bold">
+  <img src="docs/screenshots/menu.png" width="880" alt="Right-click menu with Show date, Size, Weight, Show wk, Start with Windows, Check for updates and Exit; the Weight submenu offers Light, Regular, Semibold and Bold">
 </p>
 
 <p align="center">
@@ -104,7 +104,6 @@ Right-click the week number and tick **Start with Windows**.
 | Menu item | What it does |
 |---|---|
 | Show date | Shows today's date and week |
-| Refresh | Redraws the icon (it also updates by itself at midnight) |
 | Size | Size of the number: 100 % (largest), 90 %, 80 % or 70 % |
 | Weight | Thickness of the number: Light, Regular, Semibold or Bold |
 | Show "wk" | Shows "wk" above the number |
