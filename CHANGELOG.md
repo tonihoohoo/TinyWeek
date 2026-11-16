@@ -6,8 +6,7 @@ changing `VERSION`; the release is not published without one.
 
 ## 1.2.0
 
-- New: **Show "wk"** in the menu draws a small "wk" label above the week number
-  (at display scaling of 125 % or more).
+- New: **Show "wk"** in the menu draws a "wk" label above the week number.
 - Changed: the smallest size, 60 %, is removed. Sizes are now 100, 90, 80 and 70 %.
 - New: **Check for updates** shows what has changed before you update.
 - Simpler, step-by-step install instructions in the README.

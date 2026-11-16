@@ -107,7 +107,7 @@ Right-click the week number and tick **Start with Windows**.
 | Refresh | Redraws the icon (it also updates by itself at midnight) |
 | Size | Size of the number: 100 % (largest), 90 %, 80 % or 70 % |
 | Weight | Thickness of the number: Light, Regular, Semibold or Bold |
-| Show "wk" | Shows "wk" above the number. Available at display scaling of 125 % or more |
+| Show "wk" | Shows "wk" above the number |
 | Start with Windows | Starts TinyWeek when you sign in |
 | Check for updates | Downloads and installs a newer version if there is one |
 | Exit | Closes TinyWeek |

@@ -41,6 +41,7 @@ static int   g_week;
 static int   g_size = 100;              /* digit size, % of the largest that fits */
 static int   g_weight = FW_BOLD;        /* digit font weight */
 static int   g_label;                   /* 1 = draw "wk" above the number */
+static const int g_labPct = 42;         /* share of the icon height for "wk" */
 static WCHAR g_face[LF_FACESIZE];       /* font face, follows the system UI font */
 
 static const WCHAR SETTINGS_KEY[] = L"Software\\TinyWeek";
@@ -229,7 +230,7 @@ static HICON make_icon(int week)
     pick_font(dc);
 
     FIT num, lab;
-    if (!g_label || S < 20) {               /* the label is unreadable at 16 px */
+    if (!g_label) {
         /* Number only: as large as the whole box allows. */
         fit(dc, px, W, txt, n, T, T, gap, &num);
         memset(px, 0, (SIZE_T)W * W * 4);
@@ -238,7 +239,7 @@ static HICON make_icon(int week)
     } else {
         /* "wk" on a small top line, the number below it. */
         int lineGap = T >= 24 ? T / 16 : 1;
-        int labH = T * 34 / 100;
+        int labH = T * g_labPct / 100;
         fit(dc, px, W, L"wk", 2, T, labH, gap, &lab);
         fit(dc, px, W, txt, n, T, T - lab.h - lineGap, gap, &num);
         int y = (S - (lab.h + lineGap + num.h)) / 2;
@@ -688,10 +689,7 @@ static void show_menu(HWND hwnd, int x, int y)
     for (int i = 0; i < COUNT(WEIGHTS); i++)
         AppendMenuW(wt, MF_STRING | (WEIGHTS[i] == g_weight ? MF_CHECKED : 0), IDM_WEIGHT + i, WEIGHT_NAMES[i]);
     AppendMenuW(m, MF_POPUP, (UINT_PTR)wt, L"Weight");
-    if (GetSystemMetrics(SM_CXSMICON) >= 20)
-        AppendMenuW(m, MF_STRING | (g_label ? MF_CHECKED : 0), IDM_LABEL, L"Show \x201cwk\x201d");
-    else
-        AppendMenuW(m, MF_STRING | MF_GRAYED, IDM_LABEL, L"Show \x201cwk\x201d (needs 125 % display scaling)");
+    AppendMenuW(m, MF_STRING | (g_label ? MF_CHECKED : 0), IDM_LABEL, L"Show \x201cwk\x201d");
     AppendMenuW(m, MF_STRING | (autorun_enabled() ? MF_CHECKED : 0), IDM_AUTORUN, L"Start with Windows");
     AppendMenuW(m, MF_STRING | (g_busy ? MF_GRAYED : 0), IDM_UPDATE,
                 g_busy ? L"Checking for updates 26" : L"Check for updates");
