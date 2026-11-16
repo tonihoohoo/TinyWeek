@@ -366,18 +366,19 @@ static void load_settings(void)
 
 /* ---------- Themed dialog ----------
  * MessageBox cannot be dark, so TinyWeek draws its own small dialog in the
- * Windows 11 style. It follows the apps light/dark setting and uses the
- * Windows accent colour for the main button. */
+ * Windows 11 style. It follows the apps light/dark mode, the accent colour
+ * and high contrast, uses real STATIC controls so screen readers read the
+ * text, and copies its text with Ctrl+C like MessageBox. */
 static struct {
     const WCHAR *heading, *body;
-    int result, done, dpi, dark;
+    int result, done, dpi, dark, hc, hot;
     HFONT fHead, fBody;
     HBRUSH bgContent, bgFooter;
-    COLORREF text, accent;
-    RECT rHead, rBody;
+    COLORREF text, accent, accentText;
     int footerY, iconSz, pad;
     HICON icon;
     HWND hwnd;
+    WNDPROC btnProc;
 } D;
 
 #define SC(x) MulDiv((x), D.dpi, 96)
@@ -388,21 +389,52 @@ static DWORD reg_dword(const WCHAR *key, const WCHAR *name, DWORD def)
     return RegGetValueW(HKEY_CURRENT_USER, key, name, RRF_RT_REG_DWORD, NULL, &v, &cb) ? def : v;
 }
 
+static COLORREF mix(COLORREF a, COLORREF b, int pctA)
+{
+    return RGB((GetRValue(a) * pctA + GetRValue(b) * (100 - pctA)) / 100,
+               (GetGValue(a) * pctA + GetGValue(b) * (100 - pctA)) / 100,
+               (GetBValue(a) * pctA + GetBValue(b) * (100 - pctA)) / 100);
+}
+
+/* Accent shade used by Windows 11 for primary buttons: a lighter shade in
+ * dark mode (Light 2), a darker one in light mode (Dark 1). */
+static void pick_accent(void)
+{
+    BYTE pal[32];
+    DWORD cb = sizeof pal;
+    if (!RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Accent",
+                      L"AccentPalette", RRF_RT_REG_BINARY, NULL, pal, &cb) && cb >= 32) {
+        BYTE *c = pal + (D.dark ? 1 : 4) * 4;         /* palette entries are R,G,B,A */
+        D.accent = RGB(c[0], c[1], c[2]);
+    } else {
+        COLORREF base = reg_dword(L"Software\\Microsoft\\Windows\\DWM", L"AccentColor", 0xFFD77800) & 0xFFFFFF;
+        D.accent = D.dark ? mix(base, RGB(255, 255, 255), 55) : mix(base, RGB(0, 0, 0), 85);
+    }
+    D.accentText = D.dark ? RGB(0, 0, 0) : RGB(255, 255, 255);
+}
+
 static void draw_button(const DRAWITEMSTRUCT *di)
 {
     int primary = di->CtlID == IDOK, pressed = di->itemState & ODS_SELECTED;
+    int hot = D.hot == (int)di->CtlID;
     int focus = (di->itemState & ODS_FOCUS) && !(di->itemState & ODS_NOFOCUSRECT);
     COLORREF fill, border, fg;
-    if (primary) {
-        fill = D.accent;
-        int lum = GetRValue(fill) * 299 + GetGValue(fill) * 587 + GetBValue(fill) * 114;
-        fg = lum > 150000 ? RGB(0, 0, 0) : RGB(255, 255, 255);
+    if (D.hc) {                                     /* high contrast: system colours */
+        int lit = primary || hot || pressed;
+        fill = GetSysColor(lit ? COLOR_HIGHLIGHT : COLOR_BTNFACE);
+        fg = GetSysColor(lit ? COLOR_HIGHLIGHTTEXT : COLOR_BTNTEXT);
+        border = GetSysColor(COLOR_BTNTEXT);
+    } else if (primary) {
+        COLORREF bg = D.dark ? RGB(32, 32, 32) : RGB(243, 243, 243);
+        fill = pressed ? mix(D.accent, bg, 80) : hot ? mix(D.accent, bg, 90) : D.accent;
+        fg = D.accentText;
         border = fill;
-        if (pressed) fill = RGB(GetRValue(fill) * 4 / 5, GetGValue(fill) * 4 / 5, GetBValue(fill) * 4 / 5);
     } else if (D.dark) {
-        fill = pressed ? RGB(50, 50, 50) : RGB(55, 55, 55); border = RGB(70, 70, 70); fg = RGB(255, 255, 255);
+        fill = pressed ? RGB(50, 50, 50) : hot ? RGB(61, 61, 61) : RGB(55, 55, 55);
+        border = RGB(70, 70, 70); fg = pressed ? RGB(206, 206, 206) : RGB(255, 255, 255);
     } else {
-        fill = pressed ? RGB(240, 240, 240) : RGB(251, 251, 251); border = RGB(214, 214, 214); fg = RGB(26, 26, 26);
+        fill = pressed ? RGB(245, 245, 245) : hot ? RGB(246, 246, 246) : RGB(251, 251, 251);
+        border = RGB(214, 214, 214); fg = pressed ? RGB(93, 93, 93) : RGB(26, 26, 26);
     }
     if (focus) border = D.text;
     HDC dc = di->hDC;
@@ -423,6 +455,47 @@ static void draw_button(const DRAWITEMSTRUCT *di)
     SelectObject(dc, of);
 }
 
+/* Button subclass: hover highlight. */
+static LRESULT CALLBACK btn_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
+{
+    int id = GetDlgCtrlID(hwnd);
+    if (msg == WM_MOUSEMOVE && D.hot != id) {
+        TRACKMOUSEEVENT tme = { sizeof tme, TME_LEAVE, hwnd, 0 };
+        TrackMouseEvent(&tme);
+        D.hot = id;
+        InvalidateRect(hwnd, NULL, FALSE);
+    } else if (msg == WM_MOUSELEAVE) {
+        D.hot = 0;
+        InvalidateRect(hwnd, NULL, FALSE);
+    }
+    return CallWindowProcW(D.btnProc, hwnd, msg, wp, lp);
+}
+
+/* Ctrl+C: copy the dialog text, like MessageBox does. */
+static void copy_text(void)
+{
+    int n = lstrlenW(D.heading) + lstrlenW(D.body) * 2 + 8;
+    HGLOBAL mem = GlobalAlloc(GMEM_MOVEABLE, n * sizeof(WCHAR));
+    WCHAR *p = mem ? GlobalLock(mem) : NULL;
+    if (!p) return;
+    const WCHAR *src = D.heading;
+    for (int part = 0; part < 2; part++, src = D.body) {
+        for (; *src; src++) {
+            if (*src == '\n') *p++ = '\r';
+            *p++ = *src;
+        }
+        if (!part) { *p++ = '\r'; *p++ = '\n'; *p++ = '\r'; *p++ = '\n'; }
+    }
+    *p = 0;
+    GlobalUnlock(mem);
+    if (OpenClipboard(D.hwnd)) {
+        EmptyClipboard();
+        if (SetClipboardData(CF_UNICODETEXT, mem)) mem = NULL;
+        CloseClipboard();
+    }
+    if (mem) GlobalFree(mem);
+}
+
 static LRESULT CALLBACK dlg_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
     switch (msg) {
@@ -436,16 +509,13 @@ static LRESULT CALLBACK dlg_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         FillRect(dc, &top, D.bgContent);
         FillRect(dc, &bottom, D.bgFooter);
         DrawIconEx(dc, D.pad, D.pad, D.icon, D.iconSz, D.iconSz, 0, NULL, DI_NORMAL);
-        SetBkMode(dc, TRANSPARENT);
-        SetTextColor(dc, D.text);
-        HGDIOBJ of = SelectObject(dc, D.fHead);
-        DrawTextW(dc, D.heading, -1, &D.rHead, DT_WORDBREAK | DT_NOPREFIX);
-        SelectObject(dc, D.fBody);
-        DrawTextW(dc, D.body, -1, &D.rBody, DT_WORDBREAK | DT_NOPREFIX | DT_EXPANDTABS);
-        SelectObject(dc, of);
         EndPaint(hwnd, &ps);
         return 0;
     }
+    case WM_CTLCOLORSTATIC:
+        SetTextColor((HDC)wp, D.text);
+        SetBkMode((HDC)wp, TRANSPARENT);
+        return (LRESULT)D.bgContent;
     case WM_DRAWITEM:
         draw_button((const DRAWITEMSTRUCT *)lp);
         return TRUE;
@@ -464,6 +534,15 @@ static LRESULT CALLBACK dlg_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         return 0;
     }
     return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
+static HFONT ui_font(HDC dc, LOGFONTW lf, const WCHAR *variable, int heightPct, int weight)
+{
+    if (font_exists(dc, variable)) lstrcpynW(lf.lfFaceName, variable, LF_FACESIZE);
+    lf.lfHeight = lf.lfHeight * heightPct / 100;
+    lf.lfWeight = weight;
+    lf.lfQuality = CLEARTYPE_QUALITY;
+    return CreateFontIndirectW(&lf);
 }
 
 /* Shows a modal dialog. Returns 1 for the main button, 2 for the other
@@ -485,32 +564,40 @@ static int themed_dialog(const WCHAR *heading, const WCHAR *body, const WCHAR *y
     }
 
     HDC sdc = GetDC(NULL);
+    HIGHCONTRASTW hcm = { sizeof hcm };
     D.dpi = GetDeviceCaps(sdc, LOGPIXELSY);
-    D.heading = heading; D.body = body; D.done = 0; D.result = 2;
-    D.dark = reg_dword(THEME_KEY, L"AppsUseLightTheme", 1) == 0;
-    D.text = D.dark ? RGB(255, 255, 255) : RGB(26, 26, 26);
-    D.bgContent = CreateSolidBrush(D.dark ? RGB(43, 43, 43) : RGB(255, 255, 255));
-    D.bgFooter = CreateSolidBrush(D.dark ? RGB(32, 32, 32) : RGB(243, 243, 243));
-    D.accent = reg_dword(L"Software\\Microsoft\\Windows\\DWM", L"AccentColor", 0xFFD77800) & 0xFFFFFF;
+    D.heading = heading; D.body = body; D.done = 0; D.result = 2; D.hot = 0;
+    D.hc = SystemParametersInfoW(SPI_GETHIGHCONTRAST, sizeof hcm, &hcm, 0) && (hcm.dwFlags & HCF_HIGHCONTRASTON);
+    D.dark = !D.hc && reg_dword(THEME_KEY, L"AppsUseLightTheme", 1) == 0;
+    if (D.hc) {
+        D.text = GetSysColor(COLOR_WINDOWTEXT);
+        D.bgContent = CreateSolidBrush(GetSysColor(COLOR_WINDOW));
+        D.bgFooter = CreateSolidBrush(GetSysColor(COLOR_WINDOW));
+    } else {
+        D.text = D.dark ? RGB(255, 255, 255) : RGB(26, 26, 26);
+        D.bgContent = CreateSolidBrush(D.dark ? RGB(43, 43, 43) : RGB(255, 255, 255));
+        D.bgFooter = CreateSolidBrush(D.dark ? RGB(32, 32, 32) : RGB(243, 243, 243));
+        pick_accent();
+    }
 
+    /* Windows 11 dialog fonts: Segoe UI Variable, falling back to the
+     * system message font on older Windows. */
     NONCLIENTMETRICSW ncm = {0};
     ncm.cbSize = sizeof ncm;
     SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, sizeof ncm, &ncm, 0);
-    D.fBody = CreateFontIndirectW(&ncm.lfMessageFont);
-    ncm.lfMessageFont.lfHeight = ncm.lfMessageFont.lfHeight * 3 / 2;
-    ncm.lfMessageFont.lfWeight = FW_SEMIBOLD;
-    D.fHead = CreateFontIndirectW(&ncm.lfMessageFont);
+    D.fBody = ui_font(sdc, ncm.lfMessageFont, L"Segoe UI Variable Text", 100, FW_NORMAL);
+    D.fHead = ui_font(sdc, ncm.lfMessageFont, L"Segoe UI Variable Display", 150, FW_SEMIBOLD);
 
     /* Layout */
     D.pad = SC(24); D.iconSz = SC(32);
     int textX = D.pad + D.iconSz + SC(16), maxW = SC(400);
     int btnH = SC(32), btnGap = SC(8), btnW[2] = {0, 0};
-    SetRect(&D.rHead, textX, D.pad, textX + maxW, D.pad);
+    RECT rHead = {textX, D.pad, textX + maxW, D.pad}, rBody;
     HGDIOBJ of = SelectObject(sdc, D.fHead);
-    DrawTextW(sdc, heading, -1, &D.rHead, DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX);
-    SetRect(&D.rBody, textX, D.rHead.bottom + SC(8), textX + maxW, D.rHead.bottom + SC(8));
+    DrawTextW(sdc, heading, -1, &rHead, DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX);
+    SetRect(&rBody, textX, rHead.bottom + SC(8), textX + maxW, rHead.bottom + SC(8));
     SelectObject(sdc, D.fBody);
-    DrawTextW(sdc, body, -1, &D.rBody, DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX | DT_EXPANDTABS);
+    DrawTextW(sdc, body, -1, &rBody, DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX | DT_EXPANDTABS);
     for (int i = 0; i < 2; i++) {
         const WCHAR *t = i ? no : yes;
         RECT r = {0};
@@ -521,11 +608,11 @@ static int themed_dialog(const WCHAR *heading, const WCHAR *body, const WCHAR *y
     SelectObject(sdc, of);
     ReleaseDC(NULL, sdc);
 
-    int textR = D.rHead.right > D.rBody.right ? D.rHead.right : D.rBody.right;
+    int textR = rHead.right > rBody.right ? rHead.right : rBody.right;
     int w = textR + D.pad, buttons = btnW[0] + btnW[1] + (no ? btnGap : 0) + 2 * D.pad;
     if (w < SC(380)) w = SC(380);
     if (w < buttons) w = buttons;
-    D.footerY = (D.rBody.bottom > D.pad + D.iconSz ? D.rBody.bottom : D.pad + D.iconSz) + D.pad;
+    D.footerY = (rBody.bottom > D.pad + D.iconSz ? rBody.bottom : D.pad + D.iconSz) + D.pad;
     int h = D.footerY + btnH + 2 * D.pad;
 
     /* Window, centred on the monitor under the mouse */
@@ -547,23 +634,37 @@ static int themed_dialog(const WCHAR *heading, const WCHAR *body, const WCHAR *y
     if (DwmSetWindowAttribute(dlg, 20, &dark, sizeof dark))
         DwmSetWindowAttribute(dlg, 19, &dark, sizeof dark);
 
+    /* Text as STATIC controls, so Narrator and other screen readers read it. */
+    HWND sh = CreateWindowExW(0, L"STATIC", heading, WS_CHILD | WS_VISIBLE | SS_NOPREFIX,
+                              rHead.left, rHead.top, rHead.right - rHead.left, rHead.bottom - rHead.top,
+                              dlg, NULL, inst, NULL);
+    HWND sb = CreateWindowExW(0, L"STATIC", body, WS_CHILD | WS_VISIBLE | SS_NOPREFIX,
+                              rBody.left, rBody.top, rBody.right - rBody.left, rBody.bottom - rBody.top,
+                              dlg, NULL, inst, NULL);
+    SendMessageW(sh, WM_SETFONT, (WPARAM)D.fHead, 0);
+    SendMessageW(sb, WM_SETFONT, (WPARAM)D.fBody, 0);
+
     int bx = w - D.pad - btnW[0] - (no ? btnGap + btnW[1] : 0), by = D.footerY + D.pad;
-    HWND bYes = CreateWindowExW(0, L"BUTTON", yes, WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
-                                bx, by, btnW[0], btnH, dlg, (HMENU)IDOK, inst, NULL);
-    if (no)
-        CreateWindowExW(0, L"BUTTON", no, WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
-                        bx + btnW[0] + btnGap, by, btnW[1], btnH, dlg, (HMENU)IDCANCEL, inst, NULL);
+    HWND btn[2] = {0, 0};
+    for (int i = 0; i < 2; i++) {
+        if (i && !no) break;
+        btn[i] = CreateWindowExW(0, L"BUTTON", i ? no : yes, WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
+                                 i ? bx + btnW[0] + btnGap : bx, by, btnW[i], btnH, dlg,
+                                 (HMENU)(INT_PTR)(i ? IDCANCEL : IDOK), inst, NULL);
+        D.btnProc = (WNDPROC)SetWindowLongPtrW(btn[i], GWLP_WNDPROC, (LONG_PTR)btn_proc);
+    }
+
     /* Focus outlines only after keyboard use, as in standard dialogs. */
     SendMessageW(dlg, WM_CHANGEUISTATE, MAKEWPARAM(UIS_SET, UISF_HIDEFOCUS | UISF_HIDEACCEL), 0);
     ShowWindow(dlg, SW_SHOW);
     SetForegroundWindow(dlg);
-    SetFocus(bYes);
+    SetFocus(btn[0]);
 
     MSG m;
     while (!D.done && GetMessageW(&m, NULL, 0, 0) > 0) {
-        if (m.message == WM_KEYDOWN && m.wParam == VK_ESCAPE && IsChild(dlg, m.hwnd)) {
-            SendMessageW(dlg, WM_CLOSE, 0, 0);
-            continue;
+        if (m.message == WM_KEYDOWN && (m.hwnd == dlg || IsChild(dlg, m.hwnd))) {
+            if (m.wParam == VK_ESCAPE) { SendMessageW(dlg, WM_CLOSE, 0, 0); continue; }
+            if (m.wParam == 'C' && GetKeyState(VK_CONTROL) < 0) { copy_text(); continue; }
         }
         if (!IsDialogMessageW(dlg, &m)) {
             TranslateMessage(&m);
@@ -598,8 +699,10 @@ static void apply_menu_theme(HWND hwnd)
     int (WINAPI *SetPreferredAppMode)(int) = (void *)GetProcAddress(ux, MAKEINTRESOURCEA(135));
     BOOL (WINAPI *AllowDarkModeForWindow)(HWND, BOOL) = (void *)GetProcAddress(ux, MAKEINTRESOURCEA(133));
     void (WINAPI *FlushMenuThemes)(void) = (void *)GetProcAddress(ux, MAKEINTRESOURCEA(136));
-    int dark = !light_taskbar();                /* follow the taskbar, like the tray */
-    if (SetPreferredAppMode) SetPreferredAppMode(dark ? 2 : 3);   /* ForceDark : ForceLight */
+    HIGHCONTRASTW hc = { sizeof hc };
+    int hcOn = SystemParametersInfoW(SPI_GETHIGHCONTRAST, sizeof hc, &hc, 0) && (hc.dwFlags & HCF_HIGHCONTRASTON);
+    int dark = !hcOn && !light_taskbar();       /* follow the taskbar, like the tray */
+    if (SetPreferredAppMode) SetPreferredAppMode(hcOn ? 0 : dark ? 2 : 3);   /* Default : ForceDark : ForceLight */
     if (AllowDarkModeForWindow) AllowDarkModeForWindow(hwnd, dark);
     if (FlushMenuThemes) FlushMenuThemes();
 }
