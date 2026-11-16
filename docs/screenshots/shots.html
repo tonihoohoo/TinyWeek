@@ -90,7 +90,7 @@ function icon(n,size,{weight=700,pct=100,color='#fff',label=false}={}){
   const put=(str,r,top)=>{g.font=`${weight} ${r.em}px Inter`;let x=(size*R-r.w)/2;
     [...str].forEach((ch,i)=>{const k=r.ks[i];g.fillText(ch,x+k.actualBoundingBoxLeft,top+r.a);x+=k.actualBoundingBoxLeft+k.actualBoundingBoxRight+gap})};
   if(!label){const r=fitTo(s,T,T);put(s,r,(size*R-r.h)/2)}
-  else{const lg=Math.max(1,size>=24?size/16:1)*R,lab=fitTo('wk',T,T*0.42),num=fitTo(s,T,T-lab.h-lg),y=(size*R-(lab.h+lg+num.h))/2;
+  else{const lg=Math.max(1,size>=24?size/16:1)*R,lab=fitTo('wk',T,T*0.5),num=fitTo(s,T,T-lab.h-lg),y=(size*R-(lab.h+lg+num.h))/2;
     put('wk',lab,y);put(s,num,y+lab.h+lg)}
   return c}
 const svgs={

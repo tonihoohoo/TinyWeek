@@ -4,6 +4,11 @@ Each release on GitHub shows the section for its version, and TinyWeek shows
 it in **Check for updates** before you update. Add a section here before
 changing `VERSION`; the release is not published without one.
 
+## 1.2.1
+
+- Changed: the "wk" label is larger, so it is easier to read next to the
+  week number.
+
 ## 1.2.0
 
 - New: **Show "wk"** in the menu draws a "wk" label above the week number.

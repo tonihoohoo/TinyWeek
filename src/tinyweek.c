@@ -41,7 +41,7 @@ static int   g_week;
 static int   g_size = 100;              /* digit size, % of the largest that fits */
 static int   g_weight = FW_BOLD;        /* digit font weight */
 static int   g_label;                   /* 1 = draw "wk" above the number */
-static const int g_labPct = 42;         /* share of the icon height for "wk" */
+static const int g_labPct = 50;         /* share of the icon height for "wk" */
 static WCHAR g_face[LF_FACESIZE];       /* font face, follows the system UI font */
 
 static const WCHAR SETTINGS_KEY[] = L"Software\\TinyWeek";
