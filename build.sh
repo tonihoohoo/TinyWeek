@@ -14,13 +14,13 @@ ${CROSS}windres -I res -DTW_VERSION="$V4" -DTW_VERSION_STR="\\\"$VERSION\\\"" \
   res/tinyweek.rc -O coff -o build/tinyweek.res
 
 # No C runtime: custom entry point, only system DLLs are imported.
-${CROSS}gcc -Os -s -DUNICODE -D_UNICODE -Wall \
+${CROSS}gcc -Os -s -DUNICODE -D_UNICODE -Wall -DTW_VERSION_STR="\"$VERSION\"" \
   -ffreestanding -fno-builtin -fno-asynchronous-unwind-tables -fno-ident \
   -fno-stack-check -fno-stack-protector -mno-stack-arg-probe \
   -nostdlib -mwindows -e entry \
   -Wl,--gc-sections -Wl,--file-alignment=512 -Wl,--section-alignment=4096 \
   -Wl,--no-insert-timestamp -Wl,--build-id=none \
   -o build/TinyWeek.exe src/tinyweek.c build/tinyweek.res \
-  -lkernel32 -luser32 -lgdi32 -lshell32 -ladvapi32
+  -lkernel32 -luser32 -lgdi32 -lshell32 -ladvapi32 -lwinhttp -lbcrypt
 
 ls -l build/TinyWeek.exe

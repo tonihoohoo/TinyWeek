@@ -6,7 +6,7 @@
 
 <p align="center">
   The ISO 8601 week number in the Windows notification area.<br>
-  One 23 KB <code>.exe</code>. No installer, no runtime, no dependencies.
+  One 28 KB <code>.exe</code>. No installer, no runtime, no dependencies.
 </p>
 
 <p align="center">
@@ -51,6 +51,9 @@ taskbar's real pixel size. Hover for the full date, right-click for the menu.
 - **Correct ISO 8601 weeks**: weeks start on Monday, and week 1 is the week
   that contains the year's first Thursday (verified for every day 1900–2199).
 - **Start with Windows** toggle in the menu (per-user, no admin rights).
+- **One-click updates**: *Check for updates* downloads the latest release,
+  verifies its SHA-256 checksum and restarts into the new version.
+- **Dark menu** on a dark taskbar.
 - Single instance; the date is shown in your own locale format.
 
 ## Install
@@ -108,8 +111,14 @@ week number from the overflow onto the taskbar, or open
 
 ### Update
 
-Choose **Exit** from the menu, replace `TinyWeek.exe` with the new version
-and start it again. The startup setting is kept.
+Right-click the icon and choose **Check for updates**. If a newer version is
+available, TinyWeek asks before downloading it, checks the file against the
+SHA-256 checksum published with the release, replaces itself and restarts.
+Your settings are kept.
+
+If TinyWeek is in a folder you can't write to without admin rights (such as
+`C:\Program Files`), it offers to open the download page instead. You can also
+update by hand: **Exit**, replace `TinyWeek.exe`, start it again.
 
 ### Uninstall
 
@@ -132,7 +141,7 @@ besides the startup entry and the size and weight settings.
 |---|---|
 | Hover | Week number and full date |
 | Double-click | Date dialog |
-| Right-click | Show date · Refresh · Size · Weight · Start with Windows · Exit |
+| Right-click | Show date · Refresh · Size · Weight · Start with Windows · Check for updates · Exit |
 
 **Size** sets how large the digits are: 100 % is the largest that fits the
 icon, and 90–60 % leave more space around them. **Weight** sets the stroke
@@ -153,6 +162,14 @@ is the robust option.
 **How much memory and CPU does it use?** No CPU while idle: it sleeps until
 Windows sends it a message. Memory is around 1–2 MB, mostly the system
 libraries every GUI program loads.
+
+**Does it connect to the internet?** Only when you choose **Check for
+updates**. It then contacts GitHub (`api.github.com` and `github.com`) and
+sends nothing besides the request itself. There are no automatic checks and no
+telemetry.
+
+**Which Windows versions?** Windows 10 and 11. The dark menu needs Windows 10
+version 1903 or later.
 
 **Which week numbering?** ISO 8601, used in Finland, the rest of Europe and
 most of the world. US-style numbering (weeks starting on Sunday) is not

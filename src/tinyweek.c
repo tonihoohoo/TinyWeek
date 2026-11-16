@@ -10,6 +10,13 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <shellapi.h>
+#include <winhttp.h>
+#include <bcrypt.h>
+
+#ifndef TW_VERSION_STR
+#define TW_VERSION_STR "0.0.0"                  /* set by build.sh from VERSION */
+#endif
+#define REPO L"tonihoohoo/TinyWeek"
 
 #define APP_NAME   L"TinyWeek"
 #define WM_TRAY    (WM_APP + 1)
@@ -20,6 +27,8 @@
 #define IDM_EXIT   4
 #define IDM_SIZE   10              /* IDM_SIZE + index into SIZES */
 #define IDM_WEIGHT 20              /* IDM_WEIGHT + index into WEIGHTS */
+#define IDM_UPDATE 5
+#define WM_UPDATE  (WM_APP + 2)    /* worker thread -> UI: wParam = UPD_* result */
 
 static const WCHAR RUN_KEY[] = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 static const WCHAR THEME_KEY[] = L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize";
@@ -44,6 +53,14 @@ void *memset(void *d, int c, SIZE_T n)
     void *r = d;
     __asm__ volatile("rep stosb" : "+D"(d), "+c"(n) : "a"(c) : "memory");
     return r;
+}
+
+static int memcmp_(const void *a, const void *b, SIZE_T n)
+{
+    const BYTE *x = a, *y = b;
+    for (; n; n--, x++, y++)
+        if (*x != *y) return *x - *y;
+    return 0;
 }
 
 /* ---------- ISO 8601 week number (pure integer arithmetic) ---------- */
@@ -324,6 +341,219 @@ static void show_date(HWND hwnd)
     MessageBoxW(hwnd, msg, L"TinyWeek", MB_OK | MB_ICONINFORMATION);
 }
 
+/* ---------- Dark context menu ----------
+ * Win32 menus only turn dark through undocumented uxtheme.dll exports
+ * (Windows 10 1903+), exported by ordinal only. Missing exports = no-op. */
+static void apply_menu_theme(HWND hwnd)
+{
+    static HMODULE ux;
+    if (!ux) ux = LoadLibraryExW(L"uxtheme.dll", NULL, LOAD_LIBRARY_SEARCH_SYSTEM32);
+    if (!ux) return;
+    int (WINAPI *SetPreferredAppMode)(int) = (void *)GetProcAddress(ux, MAKEINTRESOURCEA(135));
+    BOOL (WINAPI *AllowDarkModeForWindow)(HWND, BOOL) = (void *)GetProcAddress(ux, MAKEINTRESOURCEA(133));
+    void (WINAPI *FlushMenuThemes)(void) = (void *)GetProcAddress(ux, MAKEINTRESOURCEA(136));
+    int dark = !light_taskbar();                /* follow the taskbar, like the tray */
+    if (SetPreferredAppMode) SetPreferredAppMode(dark ? 2 : 3);   /* ForceDark : ForceLight */
+    if (AllowDarkModeForWindow) AllowDarkModeForWindow(hwnd, dark);
+    if (FlushMenuThemes) FlushMenuThemes();
+}
+
+/* ---------- Updates from GitHub Releases ---------- */
+enum { UPD_LATEST, UPD_NEWER, UPD_FAILED, UPD_READY, UPD_BAD_FILE };
+
+static volatile LONG g_busy;           /* an update check/download is running */
+static char  g_latest[32];             /* newest version on GitHub, e.g. "1.2.0" */
+static BYTE *g_dl;                     /* downloaded exe */
+static DWORD g_dlLen;
+static HANDLE g_mutex;
+
+/* HTTPS GET into buf; returns bytes read, or -1 on any error / non-200. */
+static int http_get(const WCHAR *host, const WCHAR *path, BYTE *buf, int cap)
+{
+    int len = -1;
+    HINTERNET s = WinHttpOpen(L"TinyWeek", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+                              WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    HINTERNET c = s ? WinHttpConnect(s, host, INTERNET_DEFAULT_HTTPS_PORT, 0) : NULL;
+    HINTERNET r = c ? WinHttpOpenRequest(c, L"GET", path, NULL, WINHTTP_NO_REFERER,
+                                         WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE) : NULL;
+    DWORD status = 0, sz = sizeof status, got;
+    if (r && WinHttpSendRequest(r, L"Accept: application/vnd.github+json\r\n", (DWORD)-1, NULL, 0, 0, 0)
+          && WinHttpReceiveResponse(r, NULL)
+          && WinHttpQueryHeaders(r, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+                                 NULL, &status, &sz, NULL)
+          && status == 200) {
+        len = 0;
+        while (len < cap && WinHttpReadData(r, buf + len, cap - len, &got) && got)
+            len += got;
+        if (len >= cap) len = -1;              /* too large: refuse */
+    }
+    if (r) WinHttpCloseHandle(r);
+    if (c) WinHttpCloseHandle(c);
+    if (s) WinHttpCloseHandle(s);
+    return len;
+}
+
+/* "1.2.3" / "v1.2.3" -> comparable number */
+static DWORD parse_version(const char *v)
+{
+    DWORD n = 0, part = 0;
+    int parts = 0;
+    if (*v == 'v' || *v == 'V') v++;
+    for (;; v++) {
+        if (*v >= '0' && *v <= '9') part = part * 10 + (*v - '0');
+        else {
+            n = n * 1000 + part; part = 0; parts++;
+            if (*v != '.' || parts == 3) break;
+        }
+    }
+    while (parts++ < 3) n *= 1000;
+    return n;
+}
+
+static int hexval(char ch)
+{
+    if (ch >= '0' && ch <= '9') return ch - '0';
+    if (ch >= 'a' && ch <= 'f') return ch - 'a' + 10;
+    if (ch >= 'A' && ch <= 'F') return ch - 'A' + 10;
+    return -1;
+}
+
+/* Worker thread. lp = 0: check the latest release. lp = 1: download it. */
+static DWORD WINAPI update_thread(LPVOID lp)
+{
+    HWND hwnd = FindWindowW(APP_NAME, APP_NAME);
+    const int cap = 1 << 20;
+    BYTE *buf = VirtualAlloc(NULL, cap, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    WPARAM result = UPD_FAILED;
+    WCHAR path[160];
+
+    if (buf && !lp) {
+        int n = http_get(L"api.github.com", L"/repos/" REPO L"/releases/latest", buf, cap - 1);
+        if (n > 0) {
+            buf[n] = 0;
+            char *t = (char *)buf, *q = NULL;     /* find "tag_name": "v1.2.3" */
+            for (; *t; t++)
+                if (t[0] == '"' && !memcmp_(t, "\"tag_name\"", 10)) { q = t + 10; break; }
+            if (q) {
+                while (*q && *q != '"') q++;
+                if (*q == '"') {
+                    q++;
+                    int i = 0;
+                    if (*q == 'v' || *q == 'V') q++;
+                    while (*q && *q != '"' && i < (int)sizeof g_latest - 1) g_latest[i++] = *q++;
+                    g_latest[i] = 0;
+                    result = parse_version(g_latest) > parse_version(TW_VERSION_STR) ? UPD_NEWER : UPD_LATEST;
+                }
+            }
+        }
+    } else if (buf) {
+        /* Download the exe and its published SHA-256, and check they match. */
+        BYTE want[32], have[32];
+        int n, ok = 0;
+        wsprintfW(path, L"/" REPO L"/releases/download/v%S/TinyWeek.exe.sha256", g_latest);
+        n = http_get(L"github.com", path, buf, 256);
+        if (n >= 64) {
+            ok = 1;
+            for (int i = 0; i < 32; i++) {
+                int hi = hexval(buf[2 * i]), lo = hexval(buf[2 * i + 1]);
+                if (hi < 0 || lo < 0) { ok = 0; break; }
+                want[i] = (BYTE)(hi << 4 | lo);
+            }
+        }
+        wsprintfW(path, L"/" REPO L"/releases/download/v%S/TinyWeek.exe", g_latest);
+        n = ok ? http_get(L"github.com", path, buf, cap) : -1;
+        result = UPD_FAILED;
+        if (n > 0) {
+            BCRYPT_ALG_HANDLE alg;
+            result = UPD_BAD_FILE;
+            if (n > 1024 && buf[0] == 'M' && buf[1] == 'Z'
+                && !BCryptOpenAlgorithmProvider(&alg, BCRYPT_SHA256_ALGORITHM, NULL, 0)) {
+                if (!BCryptHash(alg, NULL, 0, buf, n, have, 32) && !memcmp_(have, want, 32)) {
+                    g_dl = buf; g_dlLen = n; buf = NULL;
+                    result = UPD_READY;
+                }
+                BCryptCloseAlgorithmProvider(alg, 0);
+            }
+        }
+    }
+    if (buf) VirtualFree(buf, 0, MEM_RELEASE);
+    PostMessageW(hwnd, WM_UPDATE, result, 0);
+    return 0;
+}
+
+static void start_update(LPVOID stage)
+{
+    if (InterlockedExchange(&g_busy, 1)) return;
+    HANDLE t = CreateThread(NULL, 0, update_thread, stage, 0, NULL);
+    if (t) CloseHandle(t); else g_busy = 0;
+}
+
+static void open_releases(void)
+{
+    ShellExecuteW(NULL, L"open", L"https://github.com/" REPO L"/releases/latest", NULL, NULL, SW_SHOWNORMAL);
+}
+
+/* Swap the running exe for the downloaded one and restart. Windows allows
+ * renaming a running exe, so: self -> self.old, write new, launch it, exit. */
+static void install_update(HWND hwnd)
+{
+    WCHAR self[MAX_PATH], old[MAX_PATH + 8];
+    DWORD n = GetModuleFileNameW(NULL, self, MAX_PATH), w = 0;
+    lstrcpyW(old, self); lstrcatW(old, L".old");
+    DeleteFileW(old);
+    if (n && MoveFileExW(self, old, MOVEFILE_REPLACE_EXISTING)) {
+        HANDLE f = CreateFileW(self, GENERIC_WRITE, 0, NULL, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, NULL);
+        BOOL ok = f != INVALID_HANDLE_VALUE && WriteFile(f, g_dl, g_dlLen, &w, NULL) && w == g_dlLen;
+        if (f != INVALID_HANDLE_VALUE) CloseHandle(f);
+        if (ok) {
+            Shell_NotifyIconW(NIM_DELETE, &g_nid);
+            ReleaseMutex(g_mutex); CloseHandle(g_mutex); g_mutex = NULL;
+            if ((INT_PTR)ShellExecuteW(NULL, NULL, self, L"/updated", NULL, SW_SHOWNORMAL) > 32) {
+                DestroyWindow(hwnd);
+                return;
+            }
+        }
+        DeleteFileW(self);                       /* roll back */
+        MoveFileExW(old, self, 0);
+    }
+    if (MessageBoxW(hwnd, L"TinyWeek could not replace its own file, for example because "
+                    L"the folder needs admin rights.\n\nOpen the download page instead?",
+                    L"TinyWeek", MB_YESNO | MB_ICONWARNING) == IDYES)
+        open_releases();
+    /* the icon may have been removed above: bring it back */
+    update_tray(hwnd, TRUE);
+}
+
+static void on_update_result(HWND hwnd, WPARAM result)
+{
+    WCHAR msg[200];
+    g_busy = 0;
+    switch (result) {
+    case UPD_LATEST:
+        wsprintfW(msg, L"You have the latest version, TinyWeek %S.", TW_VERSION_STR);
+        MessageBoxW(hwnd, msg, L"TinyWeek", MB_OK | MB_ICONINFORMATION);
+        break;
+    case UPD_NEWER:
+        wsprintfW(msg, L"TinyWeek %S is available. You have %S.\n\nUpdate now?", g_latest, TW_VERSION_STR);
+        if (MessageBoxW(hwnd, msg, L"TinyWeek", MB_YESNO | MB_ICONQUESTION) == IDYES)
+            start_update((LPVOID)1);
+        break;
+    case UPD_READY:
+        install_update(hwnd);
+        if (g_dl) { VirtualFree(g_dl, 0, MEM_RELEASE); g_dl = NULL; }
+        break;
+    case UPD_BAD_FILE:
+        MessageBoxW(hwnd, L"The downloaded file did not match its published checksum, "
+                    L"so it was not installed.", L"TinyWeek", MB_OK | MB_ICONWARNING);
+        break;
+    default:
+        if (MessageBoxW(hwnd, L"Could not reach GitHub to check for updates.\n\n"
+                        L"Open the download page in your browser?",
+                        L"TinyWeek", MB_YESNO | MB_ICONWARNING) == IDYES)
+            open_releases();
+    }
+}
+
 static void show_menu(HWND hwnd, int x, int y)
 {
     HMENU m = CreatePopupMenu();
@@ -341,6 +571,8 @@ static void show_menu(HWND hwnd, int x, int y)
         AppendMenuW(wt, MF_STRING | (WEIGHTS[i] == g_weight ? MF_CHECKED : 0), IDM_WEIGHT + i, WEIGHT_NAMES[i]);
     AppendMenuW(m, MF_POPUP, (UINT_PTR)wt, L"Weight");
     AppendMenuW(m, MF_STRING | (autorun_enabled() ? MF_CHECKED : 0), IDM_AUTORUN, L"Start with Windows");
+    AppendMenuW(m, MF_STRING | (g_busy ? MF_GRAYED : 0), IDM_UPDATE,
+                g_busy ? L"Checking for updates 26" : L"Check for updates");
     AppendMenuW(m, MF_SEPARATOR, 0, NULL);
     AppendMenuW(m, MF_STRING, IDM_EXIT, L"Exit");
     SetForegroundWindow(hwnd);
@@ -352,6 +584,7 @@ static void show_menu(HWND hwnd, int x, int y)
     case IDM_SHOW:    show_date(hwnd); break;
     case IDM_REFRESH: refresh(hwnd); break;
     case IDM_AUTORUN: autorun_set(!autorun_enabled()); break;
+    case IDM_UPDATE:  start_update(0); break;
     case IDM_EXIT:    DestroyWindow(hwnd); break;
     default:
         if (cmd >= IDM_SIZE && cmd < IDM_SIZE + COUNT(SIZES)) {
@@ -384,8 +617,12 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         if (wp == PBT_APMRESUMEAUTOMATIC) refresh(hwnd);
         return TRUE;
     case WM_SETTINGCHANGE:             /* light/dark theme, fonts, DPI, locale */
+        apply_menu_theme(hwnd);
+        /* fall through */
     case WM_DISPLAYCHANGE:
         update_tray(hwnd, FALSE); return 0;
+    case WM_UPDATE:
+        on_update_result(hwnd, wp); return 0;
     case WM_DESTROY:
         Shell_NotifyIconW(NIM_DELETE, &g_nid);
         PostQuitMessage(0);
@@ -400,8 +637,24 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 
 static int run(void)
 {
-    if (CreateMutexW(NULL, TRUE, L"Local\\TinyWeek-1") && GetLastError() == ERROR_ALREADY_EXISTS)
-        return 0;                                  /* already running */
+    /* After a self-update: the previous instance is exiting; remove its file. */
+    WCHAR old[MAX_PATH + 8];
+    BOOL updated = 0;
+    for (const WCHAR *c = GetCommandLineW(); *c; c++)
+        if (!memcmp_(c, L"/updated", 16)) updated = 1;
+    GetModuleFileNameW(NULL, old, MAX_PATH);
+    lstrcatW(old, L".old");
+    for (int i = 0; i < (updated ? 40 : 1) && !DeleteFileW(old)
+                    && GetLastError() != ERROR_FILE_NOT_FOUND; i++)
+        Sleep(250);
+
+    for (int i = 0;; i++) {                        /* single instance */
+        g_mutex = CreateMutexW(NULL, TRUE, L"Local\\TinyWeek-1");
+        if (GetLastError() != ERROR_ALREADY_EXISTS) break;
+        CloseHandle(g_mutex);
+        if (!updated || i == 40) return 0;         /* already running */
+        Sleep(250);
+    }
 
     HINSTANCE inst = GetModuleHandleW(NULL);
     WNDCLASSW wc = {0};
@@ -415,7 +668,16 @@ static int run(void)
     /* Hidden top-level window (never shown): receives tray + broadcast messages. */
     HWND hwnd = CreateWindowExW(WS_EX_TOOLWINDOW, APP_NAME, APP_NAME, WS_POPUP,
                                 0, 0, 0, 0, NULL, NULL, inst, NULL);
+    apply_menu_theme(hwnd);
     update_tray(hwnd, TRUE);
+    if (updated) {                                 /* confirm the update */
+        g_nid.uFlags = NIF_INFO;
+        g_nid.dwInfoFlags = NIIF_INFO;
+        lstrcpyW(g_nid.szInfoTitle, L"TinyWeek updated");
+        wsprintfW(g_nid.szInfo, L"You now have version %S.", TW_VERSION_STR);
+        Shell_NotifyIconW(NIM_MODIFY, &g_nid);
+        g_nid.szInfo[0] = 0;
+    }
     arm_midnight_timer(hwnd);
     if (autorun_enabled()) autorun_set(TRUE);       /* keep path valid if the exe was moved */
     SetProcessWorkingSetSize(GetCurrentProcess(), (SIZE_T)-1, (SIZE_T)-1);
