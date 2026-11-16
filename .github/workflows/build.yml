@@ -1,0 +1,39 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install MinGW-w64
+        run: sudo apt-get update && sudo apt-get install -y gcc-mingw-w64-x86-64
+
+      - name: Build
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then export VERSION="${GITHUB_REF_NAME#v}"; fi
+          ./build.sh
+          cd build && sha256sum TinyWeek.exe > TinyWeek.exe.sha256 && cat TinyWeek.exe.sha256
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TinyWeek
+          path: |
+            build/TinyWeek.exe
+            build/TinyWeek.exe.sha256
+
+      - name: Publish release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" build/TinyWeek.exe build/TinyWeek.exe.sha256 --title "TinyWeek $GITHUB_REF_NAME" --generate-notes

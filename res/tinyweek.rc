@@ -1,0 +1,33 @@
+#include <winver.h>
+
+1 ICON "tinyweek.ico"
+1 24   "tinyweek.manifest"
+
+#ifndef TW_VERSION
+#define TW_VERSION     1,0,0,0
+#define TW_VERSION_STR "1.0.0"
+#endif
+
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION    TW_VERSION
+PRODUCTVERSION TW_VERSION
+FILEOS         VOS_NT_WINDOWS32
+FILETYPE       VFT_APP
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904B0"
+    BEGIN
+      VALUE "FileDescription",  "TinyWeek - ISO week number in the tray"
+      VALUE "FileVersion",      TW_VERSION_STR
+      VALUE "ProductName",      "TinyWeek"
+      VALUE "ProductVersion",   TW_VERSION_STR
+      VALUE "OriginalFilename", "TinyWeek.exe"
+      VALUE "LegalCopyright",   "MIT License"
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x409, 1200
+  END
+END
