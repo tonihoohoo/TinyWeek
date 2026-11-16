@@ -38,16 +38,16 @@ h1{margin:0;font-weight:800;letter-spacing:-.02em}
 </div>
 
 <!-- 2. MENU -->
-<div class="shot wall" id="menu" style="height:580px">
+<div class="shot wall" id="menu" style="height:580px" data-label="1">
   <div class="copy" style="max-width:600px;top:40px">
     <h1 style="font-size:38px">Make it yours.</h1>
-    <p>Choose the size and weight of the digits from the right-click menu. Your choice is remembered.</p>
+    <p>Choose the size and weight of the digits, or add a “wk” label, from the right-click menu. Your choices are remembered.</p>
   </div>
   <div class="menu" style="right:186px;bottom:88px">
     <div class="i">Show date</div><div class="i">Refresh</div>
     <div class="i">Size<span>›</span></div>
     <div class="i act">Weight<span>›</span></div>
-    <div class="i">Show “wk”</div>
+    <div class="i"><span class="ck">✓</span>Show “wk”</div>
     <div class="i"><span class="ck">✓</span>Start with Windows</div>
     <div class="i">Check for updates</div>
     <div class="sep"></div><div class="i">Exit</div>
@@ -76,16 +76,22 @@ h1{margin:0;font-weight:800;letter-spacing:-.02em}
 
 <script>
 // Icon renderer mirroring the app: ink box fills target, uniform scale, tight digit gap.
-function icon(n,size,{weight=700,pct=100,color='#fff'}={}){
+function icon(n,size,{weight=700,pct=100,color='#fff',label=false}={}){
   const c=document.createElement('canvas'),R=2;c.width=c.height=size*R;c.style.width=c.style.height=size+'px';
   const g=c.getContext('2d');g.fillStyle=color;g.textBaseline='alphabetic';
   const T=size*R*pct/100,gap=Math.max(1,size>=24?size/12:1)*R,s=String(n);
   const m=em=>{g.font=`${weight} ${em}px Inter`;let w=gap*(s.length-1),a=0,d=0,ks=[];
     for(const ch of s){const k=g.measureText(ch);ks.push(k);w+=k.actualBoundingBoxRight+k.actualBoundingBoxLeft;a=Math.max(a,k.actualBoundingBoxAscent);d=Math.max(d,k.actualBoundingBoxDescent)}
     return {w,h:a+d,a,ks}};
-  let em=100,r=m(em);em=em*Math.min(T/r.w,T/r.h);r=m(em);
-  let x=(size*R-r.w)/2,y=(size*R-r.h)/2+r.a;
-  [...s].forEach((ch,i)=>{const k=r.ks[i];g.fillText(ch,x+k.actualBoundingBoxLeft,y);x+=k.actualBoundingBoxLeft+k.actualBoundingBoxRight+gap});
+  const fitTo=(str,bw,bh)=>{const mm=em=>{g.font=`${weight} ${em}px Inter`;let w=gap*(str.length-1),a=0,d=0,ks=[];
+      for(const ch of str){const k=g.measureText(ch);ks.push(k);w+=k.actualBoundingBoxRight+k.actualBoundingBoxLeft;a=Math.max(a,k.actualBoundingBoxAscent);d=Math.max(d,k.actualBoundingBoxDescent)}
+      return {w,h:a+d,a,ks,em}};
+    let r=mm(100);r=mm(100*Math.min(bw/r.w,bh/r.h));return r};
+  const put=(str,r,top)=>{g.font=`${weight} ${r.em}px Inter`;let x=(size*R-r.w)/2;
+    [...str].forEach((ch,i)=>{const k=r.ks[i];g.fillText(ch,x+k.actualBoundingBoxLeft,top+r.a);x+=k.actualBoundingBoxLeft+k.actualBoundingBoxRight+gap})};
+  if(!label){const r=fitTo(s,T,T);put(s,r,(size*R-r.h)/2)}
+  else{const lg=Math.max(1,size>=24?size/16:1)*R,lab=fitTo('wk',T,T*0.42),num=fitTo(s,T,T-lab.h-lg),y=(size*R-(lab.h+lg+num.h))/2;
+    put('wk',lab,y);put(s,num,y+lab.h+lg)}
   return c}
 const svgs={
  chev:c=>`<svg width="18" height="18" viewBox="0 0 16 16"><path d="M3 10l5-5 5 5" fill="none" stroke="${c}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
@@ -96,6 +102,6 @@ document.querySelectorAll('[data-tray]').forEach(tb=>{
   const dark=tb.dataset.tray==='dark',c=dark?'#fff':'#1b1b1b';
   tb.innerHTML=`<div class="ti">${svgs.chev(c)}</div><div class="ti ${tb.dataset.hl?'hl':''}" data-ic></div>
    <div class="sys">${svgs.wifi(c)}${svgs.vol(c)}${svgs.bat(c)}</div><div class="clock">10:39<br>16/11/2026</div>`;
-  tb.querySelector('[data-ic]').appendChild(icon(47,30,{color:c}))});
+  tb.querySelector('[data-ic]').appendChild(icon(47,30,{color:c,label:!!tb.closest('[data-label]')}))});
 document.fonts.ready.then(()=>document.body.dataset.ready=1);
 </script></body></html>
