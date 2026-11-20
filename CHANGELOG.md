@@ -4,6 +4,11 @@ Each release on GitHub shows the section for its version, and TinyWeek shows
 it in **Check for updates** before you update. Add a section here before
 changing `VERSION`; the release is not published without one.
 
+## 1.3.1
+
+- Fixed: with two or more monitors, the right-click menu could open on the
+  wrong monitor.
+
 ## 1.3.0
 
 - Changed: the date window and all update messages follow the Windows light or

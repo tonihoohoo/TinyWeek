@@ -1042,8 +1042,22 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     switch (msg) {
     case WM_TRAY:
         switch (LOWORD(lp)) {
-        case WM_CONTEXTMENU:
-            show_menu(hwnd, (short)LOWORD(wp), (short)HIWORD(wp)); break;
+        case WM_CONTEXTMENU: {
+            /* Don't use the anchor point in wParam: it can be in another DPI
+             * scale than this process, which puts the menu on the wrong
+             * monitor when the monitors have different scaling. The cursor
+             * and the icon rectangle come in this process's own scale. */
+            POINT pt;
+            RECT r;
+            NOTIFYICONIDENTIFIER nii = { sizeof nii, hwnd, 1 };
+            GetCursorPos(&pt);
+            if (Shell_NotifyIconGetRect(&nii, &r) == S_OK && !PtInRect(&r, pt)) {
+                pt.x = (r.left + r.right) / 2;          /* opened from the keyboard */
+                pt.y = r.top;
+            }
+            show_menu(hwnd, pt.x, pt.y);
+            break;
+        }
         case WM_LBUTTONDBLCLK:
             show_date(hwnd); break;
         }
